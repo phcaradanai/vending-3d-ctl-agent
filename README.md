@@ -27,6 +27,9 @@ Copy `.env.example` to `.env` and adjust values:
 
 ```env
 PORT=3000
+VENDING_CODE=FFFFFFFF
+DOOR_TYPE_STANDBY=[1,2,3]
+DOOR_TYPE_NOW=[1,2,3]
 APP_TIMEZONE=Asia/Bangkok
 API_LOG_RETENTION_DAYS=30
 Serial_VENDING=/dev/ttyUSB0
@@ -54,26 +57,36 @@ make start
 
 ## API Endpoints
 
-- `GET /health`
+- Base path: `/api/v1`
+
+- `GET /api/v1/health`
   - Returns status and current serial configuration.
 
-- `POST /serial/vending/write`
+- `POST /api/v1/serial/vending/write`
   - Writes text command to vending serial channel.
   - Body:
     ```json
     { "data": "HELLO\n" }
     ```
 
-- `POST /serial/navigation-lights/write`
+- `POST /api/v1/serial/navigation-lights/write`
   - Writes text command to navigation-lights serial channel.
   - Body:
     ```json
     { "data": "LIGHT_ON\n" }
     ```
 
+- `POST /api/v1/vending/drugDispenser`
+  - Accepts dispenser command payload (requires `prescription`).
+  - Body (minimum):
+    ```json
+    { "prescription": "1234567909" }
+    ```
+
 ## Swagger
 
-- Swagger UI: `http://localhost:3000/docs`
+- Swagger UI: `http://localhost:3303/docs`
+- API server in Swagger is set to: `http://localhost:3303/api/v1`
 
 ## API Logging
 

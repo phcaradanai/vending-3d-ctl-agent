@@ -5,13 +5,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import morgan from "morgan";
 import { createStream } from "rotating-file-stream";
+
 import healthRouter from "./routes/health.routes.js";
 import serialRouter from "./routes/serial.routes.js";
+import drugDispenserRouter from "./routes/drugDispenser.routes.js";
+
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
 import { setupSwagger } from "./docs/swagger.js";
 import { API_LOG_RETENTION_DAYS, APP_TIMEZONE } from "./config/env.js";
 
 const app = express();
+const API_BASE_PATH = "/api/v1";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const logsDirectory = path.resolve(__dirname, "../logs");
@@ -71,8 +76,9 @@ app.use(morgan(combinedWithAppTimezone, { stream: accessLogStream }));
 app.use(morgan(combinedWithAppTimezone));
 setupSwagger(app);
 
-app.use(healthRouter);
-app.use(serialRouter);
+app.use(API_BASE_PATH, healthRouter);
+app.use(API_BASE_PATH, serialRouter);
+app.use(API_BASE_PATH, drugDispenserRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
