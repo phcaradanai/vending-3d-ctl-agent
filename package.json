@@ -1,0 +1,23 @@
+{
+  "name": "vending-3d-ctl",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "apps.js",
+  "scripts": {
+    "start": "node apps.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "morgan": "^1.10.1",
+    "nodemon": "^3.1.14",
+    "rotating-file-stream": "^3.2.9",
+    "serialport": "^13.0.0",
+    "swagger-ui-express": "^5.0.1"
+  }
+}
