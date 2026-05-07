@@ -2,6 +2,8 @@ import { SerialPort } from "serialport";
 import {
   SERIAL_NAVIGATION_LIGHTS,
   SERIAL_NAVIGATION_LIGHTS_BAUD_RATE,
+  SERIAL_QR_NFC,
+  SERIAL_QR_NFC_BAUD_RATE,
   SERIAL_VENDING,
   SERIAL_VENDING_BAUD_RATE,
   SERIAL_WRITE_TIMEOUT_MS,
@@ -9,12 +11,16 @@ import {
 
 let vendingSerialPort;
 let navigationLightsSerialPort;
+let qrNfcSerialPort;
 let vendingReconnectTimer;
 let navigationReconnectTimer;
+let qrNfcReconnectTimer;
 let vendingLastError;
 let navigationLastError;
+let qrNfcLastError;
 let vendingLastConnectedAt;
 let navigationLastConnectedAt;
+let qrNfcLastConnectedAt;
 let vendingLastWriteAt;
 let navigationLastWriteAt;
 
@@ -46,6 +52,7 @@ async function getPort(currentPort, path, baudRate) {
 function logSerialData(channel, chunk) {
   const payload = chunk.toString("utf8");
   console.log(`[serial:${channel}] rx -> ${payload}`);
+  console.log(`[serial:${channel}] rx [buffer] ->`, Array.from(chunk));
 }
 
 function scheduleReconnect(channel, connectFn, timerRefName) {
@@ -56,6 +63,9 @@ function scheduleReconnect(channel, connectFn, timerRefName) {
   if (timerRefName === "navigation" && navigationReconnectTimer) {
     return;
   }
+  if (timerRefName === "qrNfc" && qrNfcReconnectTimer) {
+    return;
+  }
 
   // Keep reconnecting in background when cable/device is temporarily unavailable.
   const timer = setTimeout(async () => {
@@ -64,16 +74,20 @@ function scheduleReconnect(channel, connectFn, timerRefName) {
     } finally {
       if (timerRefName === "vending") {
         vendingReconnectTimer = undefined;
-      } else {
+      } else if (timerRefName === "navigation") {
         navigationReconnectTimer = undefined;
+      } else {
+        qrNfcReconnectTimer = undefined;
       }
     }
   }, 2000);
 
   if (timerRefName === "vending") {
     vendingReconnectTimer = timer;
-  } else {
+  } else if (timerRefName === "navigation") {
     navigationReconnectTimer = timer;
+  } else {
+    qrNfcReconnectTimer = timer;
   }
 }
 
@@ -149,43 +163,99 @@ async function connectNavigationLightsPort() {
   }
 }
 
+async function connectQrNfcPort() {
+  try {
+    qrNfcSerialPort = await getPort(qrNfcSerialPort, SERIAL_QR_NFC, SERIAL_QR_NFC_BAUD_RATE);
+
+    qrNfcSerialPort.removeAllListeners("data");
+    qrNfcSerialPort.removeAllListeners("close");
+    qrNfcSerialPort.removeAllListeners("error");
+
+    // Keep receiving QR/NFC scans continuously in background.
+    qrNfcSerialPort.on("data", (chunk) => logSerialData("qr-nfc", chunk));
+    qrNfcSerialPort.on("close", () => {
+      scheduleReconnect("qr-nfc", connectQrNfcPort, "qrNfc");
+    });
+    qrNfcSerialPort.on("error", () => {
+      scheduleReconnect("qr-nfc", connectQrNfcPort, "qrNfc");
+    });
+    qrNfcLastError = undefined;
+    qrNfcLastConnectedAt = new Date().toISOString();
+  } catch (error) {
+    console.error(`[serial:qr-nfc] open failed: ${error.message}`);
+    qrNfcLastError = error.message;
+    scheduleReconnect("qr-nfc", connectQrNfcPort, "qrNfc");
+  }
+}
+
 export async function initializeSerialListeners() {
-  // Start both listeners at app boot so inbound data is never missed.
-  await Promise.all([connectVendingPort(), connectNavigationLightsPort()]);
+  // Start listeners at app boot so inbound data is never missed.
+  await Promise.all([connectVendingPort(), connectNavigationLightsPort(), connectQrNfcPort()]);
 }
 
 async function writeToPort(port, data) {
-  await new Promise((resolve, reject) => {
+  // Remove spacing to support payloads like "EE01 0000 ...".
+  const normalizedHex = data.replace(/\s+/g, "");
+  if (!/^[\da-fA-F]+$/.test(normalizedHex) || normalizedHex.length % 2 !== 0) {
+    const payloadError = new Error("Serial payload must be a valid even-length hex string");
+    payloadError.status = 400;
+    throw payloadError;
+  }
+  const buffer = Buffer.from(normalizedHex, "hex");
+
+  console.log(`[serial:${port.path}] tx -> ${normalizedHex}`);
+  console.log(`[serial:${port.path}] tx [buffer] ->`, Array.from(buffer));
+  const responseChunk = await new Promise((resolve, reject) => {
     // Protect API from hanging forever if hardware stops responding.
     const timeout = setTimeout(() => {
+      cleanup();
       const timeoutError = new Error(
-        `Serial write timeout after ${SERIAL_WRITE_TIMEOUT_MS} ms`
+        `Serial response timeout after ${SERIAL_WRITE_TIMEOUT_MS} ms`
       );
       timeoutError.status = 504;
       reject(timeoutError);
     }, SERIAL_WRITE_TIMEOUT_MS);
 
-    port.write(data, (writeError) => {
+    const onData = (chunk) => {
+      cleanup();
+      resolve(chunk);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      port.off("data", onData);
+      port.off("error", onError);
+    };
+
+    port.on("data", onData);
+    port.on("error", onError);
+
+    port.write(buffer, (writeError) => {
       if (writeError) {
-        clearTimeout(timeout);
+        cleanup();
         reject(writeError);
         return;
       }
 
       port.drain((drainError) => {
-        clearTimeout(timeout);
         if (drainError) {
+          cleanup();
           reject(drainError);
-          return;
         }
-        resolve();
       });
     });
   });
+  const responseHex = responseChunk.toString("hex").toUpperCase();
+  console.log(`[serial:${port.path}] awaited-rx -> ${responseHex}`);
 
   return {
     success: true,
-    bytes: Buffer.byteLength(data),
+    bytes: buffer.length,
+    responseHex,
+    responseBytes: Array.from(responseChunk),
   };
 }
 
@@ -220,6 +290,10 @@ export function getSerialConfig() {
     navigationLights: {
       path: SERIAL_NAVIGATION_LIGHTS,
       baudRate: SERIAL_NAVIGATION_LIGHTS_BAUD_RATE,
+    },
+    qrNfc: {
+      path: SERIAL_QR_NFC,
+      baudRate: SERIAL_QR_NFC_BAUD_RATE,
     },
     writeTimeoutMs: SERIAL_WRITE_TIMEOUT_MS,
   };
@@ -275,10 +349,21 @@ export function getSerialHealthSnapshot() {
     lastWriteAt: navigationLastWriteAt,
     lastError: navigationLastError,
   });
+  const qrNfc = buildPortHealth({
+    channel: "qr-nfc",
+    configuredPath: SERIAL_QR_NFC,
+    configuredBaudRate: SERIAL_QR_NFC_BAUD_RATE,
+    portInstance: qrNfcSerialPort,
+    reconnectTimer: qrNfcReconnectTimer,
+    lastConnectedAt: qrNfcLastConnectedAt,
+    lastWriteAt: null,
+    lastError: qrNfcLastError,
+  });
 
   const ports = {
     vending,
     navigationLights,
+    qrNfc,
   };
   const connectedPorts = Object.values(ports).filter((port) => port.serialReady).length;
   const totalPorts = Object.keys(ports).length;

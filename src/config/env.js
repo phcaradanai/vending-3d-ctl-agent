@@ -36,11 +36,17 @@ export const SERIAL_VENDING_BAUD_RATE = toNumber(
   9600
 );
 export const SERIAL_NAVIGATION_LIGHTS =
-  process.env.Serial_NAVIGATION_LIGHTS ||  "/dev/ttyUSB0";
-  process.env.SERIAL_NAVIGATION_LIGHTS ||   "/dev/ttyUSB1";
-  
+  process.env.Serial_NAVIGATION_LIGHTS ||
+  process.env.SERIAL_NAVIGATION_LIGHTS ||
+  "/dev/ttyUSB1";
 export const SERIAL_NAVIGATION_LIGHTS_BAUD_RATE = toNumber(
   process.env.SERIAL_NAVIGATION_LIGHTS_BAUD_RATE,
+  9600
+);
+export const SERIAL_QR_NFC =
+  process.env.Serial_QR_NFC || process.env.SERIAL_QR_NFC || "/dev/ttyUSB2";
+export const SERIAL_QR_NFC_BAUD_RATE = toNumber(
+  process.env.SERIAL_QR_NFC_BAUD_RATE,
   9600
 );
 export const SERIAL_WRITE_TIMEOUT_MS = toNumber(

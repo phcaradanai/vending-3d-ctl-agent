@@ -55,6 +55,37 @@ or
 make start
 ```
 
+## Docker
+
+Build image:
+
+```bash
+docker build -t vending-3d-ctl:latest .
+```
+
+Run container:
+
+```bash
+docker run --rm -p 3303:3303 --env-file .env -v ./logs:/app/logs vending-3d-ctl:latest
+```
+
+Compose:
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+Stop compose:
+
+```bash
+docker compose down
+```
+
+Notes:
+- For Linux host serial ports, uncomment `devices` in `docker-compose.yml` and map `/dev/ttyUSB*`.
+- For Windows COM ports, serial passthrough depends on Docker Desktop/WSL setup; use Linux device mapping when running in Linux environment.
+
 ## API Endpoints
 
 - Base path: `/api/v1`

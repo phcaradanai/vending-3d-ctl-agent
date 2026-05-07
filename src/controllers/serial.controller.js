@@ -33,6 +33,10 @@ export function healthController(_req, res) {
           ...serialConfig.navigationLights,
           ...serialHealth.ports.navigationLights,
         },
+        qrNfc: {
+          ...serialConfig.qrNfc,
+          ...serialHealth.ports.qrNfc,
+        },
       },
       writeTimeoutMs: serialConfig.writeTimeoutMs,
     },

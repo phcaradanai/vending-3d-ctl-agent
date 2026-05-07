@@ -1,0 +1,19 @@
+services:
+  vending-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vending-3d-ctl
+    restart: unless-stopped
+    ports:
+      - "3303:3303"
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    # Linux serial device mapping examples:
+    # devices:
+    #   - "/dev/ttyUSB0:/dev/ttyUSB0"
+    #   - "/dev/ttyUSB1:/dev/ttyUSB1"
+    #   - "/dev/ttyUSB2:/dev/ttyUSB2"
+
