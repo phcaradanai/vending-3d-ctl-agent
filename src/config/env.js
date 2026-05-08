@@ -92,6 +92,10 @@ export const SERIAL_WRITE_TIMEOUT_MS = toNumber(
   process.env.SERIAL_WRITE_TIMEOUT_MS,
   3000
 );
+export const SERIAL_API_TIMEOUT_MS = toNumber(
+  process.env.SERIAL_API_TIMEOUT_MS,
+  SERIAL_WRITE_TIMEOUT_MS + 2000
+);
 export const MQTT_ENABLED = toBoolean(process.env.MQTT_ENABLED, false);
 export const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || "mqtt://127.0.0.1:1883";
 export const MQTT_CLIENT_ID = process.env.MQTT_CLIENT_ID || "vending-3d-ctl";
