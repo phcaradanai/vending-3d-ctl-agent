@@ -42,6 +42,20 @@ function toHexByteArray(value, fallback) {
   return bytes;
 }
 
+function resolveEnvTemplate(value) {
+  return String(value).replace(/\$\{([A-Z0-9_]+)\}/g, (_match, key) => {
+    return process.env[key] ?? "";
+  });
+}
+
+function toRegex(value, fallback) {
+  try {
+    return new RegExp(value, "i");
+  } catch {
+    return fallback;
+  }
+}
+
 export const PORT = toNumber(process.env.PORT, 3000);
 export const CUSTOMER_CODE = process.env.CUSTOMER_CODE || "wnyh";
 export const VENDING_CODE = process.env.VENDING_CODE || "FFFFFFFF";
@@ -83,15 +97,20 @@ export const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || "mqtt://127.0.0.1:
 export const MQTT_CLIENT_ID = process.env.MQTT_CLIENT_ID || "vending-3d-ctl";
 export const MQTT_USERNAME = process.env.MQTT_USERNAME || "";
 export const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "";
-export const MQTT_QRNFC_TOPIC = process.env.MQTT_QRNFC_TOPIC || "hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader";
+export const MQTT_QRNFC_TOPIC = resolveEnvTemplate(
+  process.env.MQTT_QRNFC_TOPIC || "hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader"
+);
 export const MQTT_QRNFC_QOS = toNumber(process.env.MQTT_QRNFC_QOS, 0);
 export const MQTT_QRNFC_RETAIN = toBoolean(process.env.MQTT_QRNFC_RETAIN, false);
 export const MQTT_QRNFC_MIFARE_SIGNATURE = toHexByteArray(
   process.env.MQTT_QRNFC_MIFARE_SIGNATURE,
   [0x02, 0xff, 0x01, 0x09, 0x00]
 );
-export const MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX = new RegExp(process.env.MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX ||
-  /([0-9a-f\-]{36})_(\d{8})_(\d+)_(\d+)_(IN|OUT)_(\d{14})/i);
+export const MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX = toRegex(
+  process.env.MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX ||
+    "([0-9a-f\\-]{36})_(\\d{8})_(\\d+)_(\\d+)_(IN|OUT)_(\\d{14})",
+  /([0-9a-f\-]{36})_(\d{8})_(\d+)_(\d+)_(IN|OUT)_(\d{14})/i
+);
 export const API_LOG_RETENTION_DAYS = toNumber(
   process.env.API_LOG_RETENTION_DAYS,
   30
