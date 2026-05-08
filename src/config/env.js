@@ -5,6 +5,11 @@ function toNumber(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
 function toNumberArray(value, fallback) {
   if (!value) return fallback;
   try {
@@ -18,7 +23,27 @@ function toNumberArray(value, fallback) {
   }
 }
 
+function toHexByteArray(value, fallback) {
+  if (!value) return fallback;
+  const tokens = String(value)
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (!tokens.length) return fallback;
+
+  const bytes = tokens.map((token) => {
+    const normalized = token.replace(/^0x/i, "");
+    if (!/^[\da-fA-F]{1,2}$/.test(normalized)) return NaN;
+    return Number.parseInt(normalized, 16);
+  });
+  if (bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+    return fallback;
+  }
+  return bytes;
+}
+
 export const PORT = toNumber(process.env.PORT, 3000);
+export const CUSTOMER_CODE = process.env.CUSTOMER_CODE || "wnyh";
 export const VENDING_CODE = process.env.VENDING_CODE || "FFFFFFFF";
 export const DOOR_TYPE_STANDBY = toNumberArray(process.env.DOOR_TYPE_STANDBY, [1, 2, 3]);
 export const DOOR_TYPE_NOW = toNumberArray(process.env.DOOR_TYPE_NOW, [1, 2, 3]);
@@ -53,6 +78,20 @@ export const SERIAL_WRITE_TIMEOUT_MS = toNumber(
   process.env.SERIAL_WRITE_TIMEOUT_MS,
   3000
 );
+export const MQTT_ENABLED = toBoolean(process.env.MQTT_ENABLED, false);
+export const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || "mqtt://127.0.0.1:1883";
+export const MQTT_CLIENT_ID = process.env.MQTT_CLIENT_ID || "vending-3d-ctl";
+export const MQTT_USERNAME = process.env.MQTT_USERNAME || "";
+export const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "";
+export const MQTT_QRNFC_TOPIC = process.env.MQTT_QRNFC_TOPIC || "hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader";
+export const MQTT_QRNFC_QOS = toNumber(process.env.MQTT_QRNFC_QOS, 0);
+export const MQTT_QRNFC_RETAIN = toBoolean(process.env.MQTT_QRNFC_RETAIN, false);
+export const MQTT_QRNFC_MIFARE_SIGNATURE = toHexByteArray(
+  process.env.MQTT_QRNFC_MIFARE_SIGNATURE,
+  [0x02, 0xff, 0x01, 0x09, 0x00]
+);
+export const MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX = new RegExp(process.env.MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX ||
+  /([0-9a-f\-]{36})_(\d{8})_(\d+)_(\d+)_(IN|OUT)_(\d{14})/i);
 export const API_LOG_RETENTION_DAYS = toNumber(
   process.env.API_LOG_RETENTION_DAYS,
   30

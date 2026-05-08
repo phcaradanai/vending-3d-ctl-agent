@@ -4,10 +4,12 @@ import {
   writeNavigationLightsSerialData,
   writeVendingSerialData,
 } from "../services/serial.service.js";
+import { getMqttStatus } from "../services/mqtt.service.js";
 
 export function healthController(_req, res) {
   const serialConfig = getSerialConfig();
   const serialHealth = getSerialHealthSnapshot();
+  const mqtt = getMqttStatus();
 
   res.json({
     status: serialHealth.serialReady ? "ok" : "degraded",
@@ -18,6 +20,7 @@ export function healthController(_req, res) {
       pid: process.pid,
     },
     serialReady: serialHealth.serialReady,
+    mqtt,
     serial: {
       summary: {
         serialReady: serialHealth.serialReady,

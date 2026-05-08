@@ -36,7 +36,13 @@ Serial_VENDING=/dev/ttyUSB0
 SERIAL_VENDING_BAUD_RATE=9600
 Serial_NAVIGATION_LIGHTS=/dev/ttyUSB1
 SERIAL_NAVIGATION_LIGHTS_BAUD_RATE=9600
+SERIAL_QR_NFC=/dev/ttyUSB2
+SERIAL_QR_NFC_BAUD_RATE=9600
 SERIAL_WRITE_TIMEOUT_MS=3000
+MQTT_ENABLED=false
+MQTT_BROKER_URL=mqtt://127.0.0.1:1883
+MQTT_CLIENT_ID=vending-3d-ctl
+MQTT_QRNFC_TOPIC=vending/qr-nfc/raw
 ```
 
 Notes:
@@ -130,9 +136,10 @@ Notes:
 
 ## Serial behavior
 
-- Both serial ports are opened and listened continuously at startup.
+- All serial ports are opened and listened continuously at startup.
 - Incoming hardware data is logged even when there is no API request.
 - If serial is disconnected/error, service retries connection automatically.
+- QR/NFC incoming serial data can be published to MQTT topic (`MQTT_QRNFC_TOPIC`) when `MQTT_ENABLED=true`.
 
 ## Makefile commands
 

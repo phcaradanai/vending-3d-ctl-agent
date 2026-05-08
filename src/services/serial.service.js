@@ -8,6 +8,8 @@ import {
   SERIAL_VENDING_BAUD_RATE,
   SERIAL_WRITE_TIMEOUT_MS,
 } from "../config/env.js";
+import { publishQrNfcPayload } from "./mqtt.service.js";
+
 
 let vendingSerialPort;
 let navigationLightsSerialPort;
@@ -23,6 +25,9 @@ let navigationLastConnectedAt;
 let qrNfcLastConnectedAt;
 let vendingLastWriteAt;
 let navigationLastWriteAt;
+let qrNfcFrameBuffer = Buffer.alloc(0);
+let qrNfcFrameTimer;
+const QR_NFC_FRAME_IDLE_MS = 80;
 
 // Create/open a port lazily and reuse the same instance.
 async function getPort(currentPort, path, baudRate) {
@@ -51,8 +56,60 @@ async function getPort(currentPort, path, baudRate) {
 
 function logSerialData(channel, chunk) {
   const payload = chunk.toString("utf8");
-  console.log(`[serial:${channel}] rx -> ${payload}`);
-  console.log(`[serial:${channel}] rx [buffer] ->`, Array.from(chunk));
+  // console.log(`[serial:${channel}] rx -> ${payload}`);
+  // console.log(`[serial:${channel}] rx [buffer] ->`, Array.from(chunk));
+
+  // if (channel === "qr-nfc") {
+  //   console.log(`[serial:${channel}] publish to mqtt`);
+  //   publishQrNfcPayload({
+  //     payloadText: payload,
+  //     payloadBytes: Array.from(chunk),
+  //     portPath: qrNfcSerialPort?.path || SERIAL_QR_NFC,
+  //   }).catch((error) => {
+  //     console.error(`[mqtt] publish failed for qr-nfc: ${error.message}`);
+  //   });
+  // }
+  return [payload, Array.from(chunk)];  // return payload and buffer to caller
+}
+
+function flushQrNfcFrame(buffer) {
+  if (!buffer.length) return;
+  const payload = buffer.toString("utf8").trim();
+  if (!payload) return;
+
+  console.log(`[serial:qr-nfc] payload -> ${payload}`);
+  console.log(`[serial:qr-nfc] Buffer ->`, Array.from(buffer));
+  publishQrNfcPayload({
+    payloadText: payload,
+    payloadBytes: Array.from(buffer),
+    portPath: qrNfcSerialPort?.path || SERIAL_QR_NFC,
+  }).catch((error) => {
+    console.error(`[mqtt] publish failed for qr-nfc: ${error.message}`);
+  });
+}
+
+function handleQrNfcChunk(chunk) {
+  qrNfcFrameBuffer = Buffer.concat([qrNfcFrameBuffer, chunk]);
+
+  // Preferred framing: newline-delimited records from scanner.
+  let newlineIndex = qrNfcFrameBuffer.indexOf(0x0a);
+  while (newlineIndex !== -1) {
+    const frame = qrNfcFrameBuffer.subarray(0, newlineIndex).subarray(
+      0,
+      qrNfcFrameBuffer[newlineIndex - 1] === 0x0d ? newlineIndex - 1 : newlineIndex
+    );
+    flushQrNfcFrame(frame);
+    qrNfcFrameBuffer = qrNfcFrameBuffer.subarray(newlineIndex + 1);
+    newlineIndex = qrNfcFrameBuffer.indexOf(0x0a);
+  }
+
+  // Fallback framing: treat silence gap as end-of-frame.
+  if (qrNfcFrameTimer) clearTimeout(qrNfcFrameTimer);
+  qrNfcFrameTimer = setTimeout(() => {
+    flushQrNfcFrame(qrNfcFrameBuffer);
+    qrNfcFrameBuffer = Buffer.alloc(0);
+    qrNfcFrameTimer = undefined;
+  }, QR_NFC_FRAME_IDLE_MS);
 }
 
 function scheduleReconnect(channel, connectFn, timerRefName) {
@@ -104,7 +161,10 @@ async function connectVendingPort() {
     vendingSerialPort.removeAllListeners("error");
 
     // Always listen for hardware messages, even without any HTTP request.
-    vendingSerialPort.on("data", (chunk) => logSerialData("vending", chunk));
+    vendingSerialPort.on("data", async (chunk) => {
+      // const logResult = await logSerialData("vending", chunk)
+      // console.log(`[serial:vending] logResult ->`, logResult);
+    });
     vendingSerialPort.on("close", () => {
       scheduleReconnect("vending", connectVendingPort, "vending");
     });
@@ -133,8 +193,11 @@ async function connectNavigationLightsPort() {
     navigationLightsSerialPort.removeAllListeners("error");
 
     // Always listen for hardware messages, even without any HTTP request.
-    navigationLightsSerialPort.on("data", (chunk) =>
-      logSerialData("navigation-lights", chunk)
+    navigationLightsSerialPort.on("data", async (chunk) => {
+      // const logResult = await logSerialData("navigation-lights", chunk)
+      // console.log(`[serial:navigation-lights] logResult ->`, logResult);
+      // logSerialData("navigation-lights", chunk)
+    }
     );
     navigationLightsSerialPort.on("close", () => {
       scheduleReconnect(
@@ -172,8 +235,13 @@ async function connectQrNfcPort() {
     qrNfcSerialPort.removeAllListeners("error");
 
     // Keep receiving QR/NFC scans continuously in background.
-    qrNfcSerialPort.on("data", (chunk) => logSerialData("qr-nfc", chunk));
+    qrNfcSerialPort.on("data", (chunk) => {
+      handleQrNfcChunk(chunk);
+    });
     qrNfcSerialPort.on("close", () => {
+      if (qrNfcFrameTimer) clearTimeout(qrNfcFrameTimer);
+      flushQrNfcFrame(qrNfcFrameBuffer);
+      qrNfcFrameBuffer = Buffer.alloc(0);
       scheduleReconnect("qr-nfc", connectQrNfcPort, "qrNfc");
     });
     qrNfcSerialPort.on("error", () => {
@@ -206,7 +274,7 @@ async function writeToPort(port, data) {
   console.log(`[serial:${port.path}] tx -> ${normalizedHex}`);
   console.log(`[serial:${port.path}] tx [buffer] ->`, Array.from(buffer));
   const responseChunk = await new Promise((resolve, reject) => {
-    // Protect API from hanging forever if hardware stops responding.
+    // Max time budget for the full request/response.
     const timeout = setTimeout(() => {
       cleanup();
       const timeoutError = new Error(
@@ -215,10 +283,30 @@ async function writeToPort(port, data) {
       timeoutError.status = 504;
       reject(timeoutError);
     }, SERIAL_WRITE_TIMEOUT_MS);
+    // Consider response complete when line stays idle briefly after receiving bytes.
+    const responseIdleMs = 80;
+    let responseIdleTimer;
+    let hasAnyResponse = false;
+    const chunks = [];
+
+    const completeResponse = () => {
+      cleanup();
+      if (!hasAnyResponse) {
+        const timeoutError = new Error(
+          `Serial response timeout after ${SERIAL_WRITE_TIMEOUT_MS} ms`
+        );
+        timeoutError.status = 504;
+        reject(timeoutError);
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    };
 
     const onData = (chunk) => {
-      cleanup();
-      resolve(chunk);
+      hasAnyResponse = true;
+      chunks.push(chunk);
+      if (responseIdleTimer) clearTimeout(responseIdleTimer);
+      responseIdleTimer = setTimeout(completeResponse, responseIdleMs);
     };
     const onError = (error) => {
       cleanup();
@@ -226,6 +314,7 @@ async function writeToPort(port, data) {
     };
     const cleanup = () => {
       clearTimeout(timeout);
+      if (responseIdleTimer) clearTimeout(responseIdleTimer);
       port.off("data", onData);
       port.off("error", onError);
     };
