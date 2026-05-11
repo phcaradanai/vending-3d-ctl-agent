@@ -6,6 +6,8 @@ import {
   SERIAL_QR_NFC,
   SERIAL_QR_NFC_BAUD_RATE,
   SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG,
+  SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS,
+  SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY,
   SERIAL_VENDING,
   SERIAL_VENDING_BAUD_RATE,
   SERIAL_WRITE_DEBUG,
@@ -32,6 +34,7 @@ let qrNfcFrameBuffer = Buffer.alloc(0);
 let qrNfcFrameTimer;
 let navigationFrameBuffer = Buffer.alloc(0);
 let navigationFrameTimer;
+const portWriteQueue = new Map();
 const QR_NFC_FRAME_IDLE_MS = 80;
 const NAVIGATION_FRAME_IDLE_MS = 80;
 
@@ -58,6 +61,27 @@ async function getPort(currentPort, path, baudRate) {
   }
 
   return currentPort;
+}
+
+async function withPortWriteQueue(port, task) {
+  const key = port?.path || "unknown-port";
+  const previous = portWriteQueue.get(key) || Promise.resolve();
+
+  const current = previous
+    .catch(() => {})
+    .then(task)
+    .finally(() => {
+      if (portWriteQueue.get(key) === current) {
+        portWriteQueue.delete(key);
+      }
+    });
+
+  portWriteQueue.set(key, current);
+  return current;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function logSerialData(channel, chunk) {
@@ -468,7 +492,9 @@ export async function writeVendingSerialData(data) {
     SERIAL_VENDING,
     SERIAL_VENDING_BAUD_RATE
   );
-  const result = await writeToPort(vendingSerialPort, data);
+  const result = await withPortWriteQueue(vendingSerialPort, () =>
+    writeToPort(vendingSerialPort, data)
+  );
   vendingLastWriteAt = new Date().toISOString();
 
   console.log(
@@ -494,13 +520,71 @@ export async function writeNavigationLightsSerialData(data) {
     `[serial:${navigationLightsSerialPort.path}] writeNavigationLightsSerialData payloadHex ->`,
     payloadHex
   );
-  const result = await writeToPort(navigationLightsSerialPort, payloadHex);
+  let result;
+  let lastError;
+  const maxAttempt = Math.max(1, SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY + 1);
+  for (let attempt = 1; attempt <= maxAttempt; attempt += 1) {
+    try {
+      result = await withPortWriteQueue(navigationLightsSerialPort, () =>
+        writeToPort(navigationLightsSerialPort, payloadHex)
+      );
+      break;
+    } catch (error) {
+      lastError = error;
+      const isTimeout = Number(error?.status) === 504;
+      const shouldRetry = isTimeout && attempt < maxAttempt;
+      console.warn(
+        `[serial:${navigationLightsSerialPort.path}] write attempt ${attempt}/${maxAttempt} failed: ${error.message}`
+      );
+      if (!shouldRetry) {
+        throw error;
+      }
+      await sleep(SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS);
+    }
+  }
   navigationLastWriteAt = new Date().toISOString();
   // console.log(
   //   `[serial:${navigationLightsSerialPort.path}] writeNavigationLightsSerialData result ->`,
   //   JSON.stringify(result)
   // );
+  if (!result && lastError) {
+    throw lastError;
+  }
   return result;
+}
+
+export async function writeNavigationLightsSerialDataNoWait(data) {
+  navigationLightsSerialPort = await getPort(
+    navigationLightsSerialPort,
+    SERIAL_NAVIGATION_LIGHTS,
+    SERIAL_NAVIGATION_LIGHTS_BAUD_RATE
+  );
+  const payloadHex = Buffer.from(JSON.stringify(data) + "\n").toString("hex");
+  const txBuffer = Buffer.from(payloadHex, "hex");
+
+  await withPortWriteQueue(navigationLightsSerialPort, () => new Promise((resolve, reject) => {
+    navigationLightsSerialPort.write(txBuffer, (writeError) => {
+      if (writeError) {
+        reject(writeError);
+        return;
+      }
+      navigationLightsSerialPort.drain((drainError) => {
+        if (drainError) {
+          reject(drainError);
+          return;
+        }
+        resolve();
+      });
+    });
+  }));
+
+  navigationLastWriteAt = new Date().toISOString();
+  return {
+    success: true,
+    bytes: txBuffer.length,
+    accepted: data,
+    mode: "no-wait",
+  };
 }
 
 export function getSerialConfig() {

@@ -162,9 +162,7 @@ export async function publishQrNfcPayload({ payloadText, payloadBytes, portPath 
 console.log(`[mqtt] payloadText ->`, typeof(payloadText));
   const message = JSON.stringify({
     act: action,
-    code: type === "nfc-mifare"
-      ? Buffer.from(payloadBytes).toString("hex").toUpperCase()
-      : payloadText,
+    code: payloadText ,
     raw: payloadBytes,
     uid: "",
     ts: new Date().toISOString(),

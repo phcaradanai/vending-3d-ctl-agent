@@ -101,6 +101,14 @@ export const SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG = toBoolean(
   process.env.SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG,
   false
 );
+export const SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY = toNumber(
+  process.env.SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY,
+  2
+);
+export const SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS = toNumber(
+  process.env.SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS,
+  250
+);
 export const MQTT_ENABLED = toBoolean(process.env.MQTT_ENABLED, false);
 export const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || "mqtt://127.0.0.1:1883";
 export const MQTT_CLIENT_ID = process.env.MQTT_CLIENT_ID || "vending-3d-ctl";

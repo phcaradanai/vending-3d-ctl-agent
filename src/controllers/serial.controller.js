@@ -2,6 +2,7 @@ import {
   getSerialConfig,
   getSerialHealthSnapshot,
   writeNavigationLightsSerialData,
+  writeNavigationLightsSerialDataNoWait,
   writeVendingSerialData,
 } from "../services/serial.service.js";
 import { getMqttStatus } from "../services/mqtt.service.js";
@@ -75,12 +76,25 @@ export async function writeNavigationLightsSerialController(req, res, next) {
     //   JSON.stringify(result)
     // );
 
-    return res.json({ success: true,
+    return res.json({
+      success: true,
       accepted: req.body.data,
-      // result: result ? empty : result
-
-
+      serialResponse: result,
     });
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function writeNavigationLightsSerialNoWaitController(req, res, next) {
+  try {
+    const navigationLightsPath = getSerialConfig().navigationLights.path;
+    console.log(
+      `[serial:${navigationLightsPath}] writeNavigationLightsSerialNoWaitController req.body.data ->`,
+      JSON.stringify(req.body.data)
+    );
+    const result = await writeNavigationLightsSerialDataNoWait(req.body.data);
+    return res.json(result);
   } catch (error) {
     return next(error);
   }
