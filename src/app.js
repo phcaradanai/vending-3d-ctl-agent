@@ -9,6 +9,7 @@ import { createStream } from "rotating-file-stream";
 import healthRouter from "./routes/health.routes.js";
 import serialRouter from "./routes/serial.routes.js";
 import drugDispenserRouter from "./routes/drugDispenser.routes.js";
+import sy600Router from "./routes/sy600.routes.js";
 
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
 import { setupSwagger } from "./docs/swagger.js";
@@ -79,6 +80,7 @@ setupSwagger(app);
 app.use(API_BASE_PATH, healthRouter);
 app.use(API_BASE_PATH, serialRouter);
 app.use(API_BASE_PATH, drugDispenserRouter);
+app.use(API_BASE_PATH, sy600Router);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

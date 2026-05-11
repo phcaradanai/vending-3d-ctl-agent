@@ -88,6 +88,9 @@ export const SERIAL_QR_NFC_BAUD_RATE = toNumber(
   process.env.SERIAL_QR_NFC_BAUD_RATE,
   9600
 );
+export const SY600_DEVICE_ADDRESS_HEX =
+  process.env.SY600_DEVICE_ADDRESS_HEX || "AABBCCDD";
+export const SY600_USE_CRC16 = toBoolean(process.env.SY600_USE_CRC16, false);
 export const SERIAL_WRITE_TIMEOUT_MS = toNumber(
   process.env.SERIAL_WRITE_TIMEOUT_MS,
   (1 * (50 * 1000))

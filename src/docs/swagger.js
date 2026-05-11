@@ -7,9 +7,8 @@ const swaggerSpec = {
     version: "1.0.0",
     description:
       "API for vending serial control, dispenser command, and service health. " +
-      "Serial write endpoints accept an even-length hex string in `data`, send it as raw bytes, " +
-      "then wait for device RX until idle or `SERIAL_WRITE_TIMEOUT_MS`. " +
-      "`POST /serial/vending/write` also uses HTTP `SERIAL_API_TIMEOUT_MS` on the socket (see README).",
+      "Serial write endpoints support vending and navigation lights, and include SY600 command APIs with decoded responses. " +
+      "Vending write accepts hex payload; navigation-lights write accepts object payload.",
   },
   servers: [
     {
@@ -104,16 +103,16 @@ const swaggerSpec = {
     "/serial/navigation-lights/write": {
       post: {
         tags: ["Serial"],
-        summary: "Write hex payload to navigation-lights serial and wait for RX",
+        summary: "Write navigation-lights payload and wait for RX",
         description:
-          "Same contract as vending write: even-length hex in `data`, raw TX, wait for RX until idle or `SERIAL_WRITE_TIMEOUT_MS`. " +
-          "This route does not apply the separate `SERIAL_API_TIMEOUT_MS` middleware used on vending write.",
+          "Body `data` is a JSON object (for example LED command object). " +
+          "Server serializes it to JSON line, transmits bytes, and waits for RX with retry-on-timeout behavior.",
         requestBody: {
           required: true,
           content: {
             "application/json": {
               schema: {
-                $ref: "#/components/schemas/SerialWriteRequest",
+                $ref: "#/components/schemas/NavigationLightsWriteRequest",
               },
             },
           },
@@ -159,6 +158,284 @@ const swaggerSpec = {
               },
             },
           },
+        },
+      },
+    },
+    "/serial/navigation-lights/write-no-wait": {
+      post: {
+        tags: ["Serial"],
+        summary: "Write navigation-lights payload without waiting RX",
+        description:
+          "Fire-and-forget mode: write command to serial and return after drain. " +
+          "Use when device responses are unstable or not required for this operation.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/NavigationLightsWriteRequest",
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: "Write accepted (no RX wait)",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/NavigationLightsNoWaitResponse",
+                },
+              },
+            },
+          },
+          400: {
+            description: "Invalid request payload",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/ErrorResponse",
+                },
+              },
+            },
+          },
+          500: {
+            description: "Serial write failure",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/ErrorResponse",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/sy600/c3/lift": {
+      post: {
+        tags: ["SY600"],
+        summary: "C3 control lift/floor position",
+        description:
+          "Control elevator position. target=0 reset, 1..7 floor, 0x55..0x57 output positions.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600C3Request" },
+              example: { target: 1 },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/c4/micro-step": {
+      post: {
+        tags: ["SY600"],
+        summary: "C4 micro-step dispense command",
+        description:
+          "Trigger micro-step dispensing for channel range. Optional repeat lets API send same command multiple rounds sequentially.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600C4Request" },
+              example: { layer: 1, channelStart: 0, channelEnd: 5, repeat: 3 },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/c5/output-door": {
+      post: {
+        tags: ["SY600"],
+        summary: "C5 control output door",
+        description: "Control output door: action 0 close, 1 open.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600DoorRequest" },
+              example: { action: 1, doorNo: 1 },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/c6/conveyor": {
+      post: {
+        tags: ["SY600"],
+        summary: "C6 control conveyor direction/time",
+        description: "Control conveyor direction and run duration in seconds.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600C6Request" },
+              example: { direction: 0, seconds: 3 },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/c7/pickup-door": {
+      post: {
+        tags: ["SY600"],
+        summary: "C7 control pickup door",
+        description: "Control pickup door: action 0 close, 1 open.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600DoorRequest" },
+              example: { action: 1, doorNo: 1 },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/24/reset-scan": {
+      post: {
+        tags: ["SY600"],
+        summary: "0x24 reset door/lift and scan info",
+        description: "Reset door and/or lift then read machine topology info.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600ResetScanRequest" },
+              example: { resetDoor: 1, resetLift: 1 },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/35/infrared": {
+      post: {
+        tags: ["SY600"],
+        summary: "0x35 read infrared/hall status",
+        description:
+          "Read one sensor status by type. 0=drop, 1=platform1, 2=anti-pinch1, 3=reserved, 4=platform2, 5=anti-pinch2, 6=platform3, 7=anti-pinch3.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600InfraredRequest" },
+              example: { sensorType: 0 },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/39/microswitch": {
+      get: {
+        tags: ["SY600"],
+        summary: "0x39 read microswitch status",
+        description:
+          "Read full microswitch/sensor status set. Response `dataBytes[0]` is sensor count, " +
+          "and the remaining bytes are status values in fixed order (0=Normal, 1=Blocked): " +
+          "pickupDoor1Up, pickupDoor1Down, antiPinch1, outputDoor1Up, outputDoor1Down, " +
+          "pickupDoor2Up, pickupDoor2Down, antiPinch2, outputDoor2Up, outputDoor2Down, " +
+          "pickupDoor3Up, pickupDoor3Down, antiPinch3, outputDoor3Up, outputDoor3Down.",
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+      post: {
+        tags: ["SY600"],
+        summary: "0x39 read microswitch status (deprecated, use GET)",
+        description:
+          "Deprecated compatibility endpoint. Use GET /sy600/39/microswitch. " +
+          "Read full microswitch/sensor status set. Response `dataBytes[0]` is sensor count, " +
+          "and the remaining bytes are status values in fixed order (0=Normal, 1=Blocked): " +
+          "pickupDoor1Up, pickupDoor1Down, antiPinch1, outputDoor1Up, outputDoor1Down, " +
+          "pickupDoor2Up, pickupDoor2Down, antiPinch2, outputDoor2Up, outputDoor2Down, " +
+          "pickupDoor3Up, pickupDoor3Down, antiPinch3, outputDoor3Up, outputDoor3Down.",
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/28/dispense": {
+      post: {
+        tags: ["SY600"],
+        summary: "0x28 channel dispense command",
+        description: "Dispense by channel range with 8-byte order id.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600DispenseRequest" },
+              example: {
+                layerAddressHex: "AABBCCDD",
+                channelStart: 0,
+                channelEnd: 0,
+                orderIdHex: "0011223344556677",
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/e0/ack": {
+      post: {
+        tags: ["SY600"],
+        summary: "0xE0 acknowledge active error report",
+        description: "Acknowledge E0 active error report so machine stops repeating report.",
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600E0AckRequest" },
+              example: { addressHex: "AABBCCDD" },
+            },
+          },
+        },
+        responses: {
+          200: { description: "ACK result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
         },
       },
     },
@@ -272,7 +549,7 @@ const swaggerSpec = {
         properties: {
           data: {
             type: "string",
-            example: "EE010000",
+            example: "ee01aabbccddc30002000052c6",
             description: "Even-length hex string to send as raw bytes; spaces are allowed and stripped",
           },
         },
@@ -285,7 +562,7 @@ const swaggerSpec = {
           bytes: { type: "number", example: 4 },
           responseHex: {
             type: "string",
-            example: "EE0100AA",
+            example: "FF0100000000C3000200006544",
             description: "Concatenated RX bytes as uppercase hex",
           },
           responseBytes: {
@@ -296,6 +573,119 @@ const swaggerSpec = {
           },
         },
         required: ["success", "bytes", "responseHex", "responseBytes"],
+      },
+      NavigationLightsWriteRequest: {
+        type: "object",
+        properties: {
+          data: {
+            type: "object",
+            additionalProperties: true,
+            example: { act: "led", cmd: [1, 165, 0, 128, 0, 1] },
+            description: "Navigation-lights JSON payload that will be serialized and sent over serial",
+          },
+        },
+        required: ["data"],
+      },
+      NavigationLightsNoWaitResponse: {
+        type: "object",
+        properties: {
+          success: { type: "boolean", example: true },
+          bytes: { type: "number", example: 33 },
+          accepted: { type: "object", additionalProperties: true },
+          mode: { type: "string", example: "no-wait" },
+        },
+        required: ["success", "bytes", "accepted", "mode"],
+      },
+      Sy600Response: {
+        type: "object",
+        properties: {
+          txHex: { type: "string", example: "EE01AABBCCDDC3000201000000" },
+          response: {
+            type: "object",
+            properties: {
+              command: { type: "string", example: "0xC3" },
+              address: { type: "string", example: "AABBCCDD" },
+              dataLength: { type: "number", example: 2 },
+              dataBytes: { type: "array", items: { type: "integer" } },
+              rawHex: { type: "string" },
+              decoded: { type: "object", additionalProperties: true },
+            },
+            required: ["command", "address", "dataLength", "dataBytes", "rawHex", "decoded"],
+            description:
+              "Decoded payload by command. For 0x39 microswitch, use `decoded.microswitchCount` and `decoded.statusBytes` " +
+              "where 0=Normal and 1=Blocked, ordered by machine sensor map.",
+          },
+        },
+        required: ["txHex", "response"],
+      },
+      Sy600C3Request: {
+        type: "object",
+        properties: {
+          target: { type: "number", example: 1, description: "0 reset, 1..7 floor, 0x55..0x57 output position" },
+        },
+        required: ["target"],
+      },
+      Sy600C4Request: {
+        type: "object",
+        properties: {
+          layer: { type: "number", example: 1 },
+          channelStart: { type: "number", example: 0 },
+          channelEnd: { type: "number", example: 5 },
+          repeat: { type: "number", example: 3, description: "Optional repeat count, range 1..100" },
+        },
+        required: ["layer", "channelStart", "channelEnd"],
+      },
+      Sy600DoorRequest: {
+        type: "object",
+        properties: {
+          action: { type: "number", example: 1, description: "0 close, 1 open" },
+          doorNo: { type: "number", example: 1 },
+        },
+        required: ["action", "doorNo"],
+      },
+      Sy600C6Request: {
+        type: "object",
+        properties: {
+          direction: { type: "number", example: 0, description: "0 forward, 1 reverse" },
+          seconds: { type: "number", example: 3, description: "0 for device default time" },
+        },
+        required: ["direction", "seconds"],
+      },
+      Sy600ResetScanRequest: {
+        type: "object",
+        properties: {
+          resetDoor: { type: "number", example: 1 },
+          resetLift: { type: "number", example: 1 },
+        },
+        required: ["resetDoor", "resetLift"],
+      },
+      Sy600InfraredRequest: {
+        type: "object",
+        properties: {
+          sensorType: {
+            type: "number",
+            example: 0,
+            description:
+              "0=drop sensor, 1=platform1, 2=anti-pinch1, 3=reserved, 4=platform2, 5=anti-pinch2, 6=platform3, 7=anti-pinch3",
+          },
+        },
+        required: ["sensorType"],
+      },
+      Sy600DispenseRequest: {
+        type: "object",
+        properties: {
+          layerAddressHex: { type: "string", example: "AABBCCDD" },
+          channelStart: { type: "number", example: 0 },
+          channelEnd: { type: "number", example: 0 },
+          orderIdHex: { type: "string", example: "0011223344556677" },
+        },
+        required: ["channelStart", "channelEnd", "orderIdHex"],
+      },
+      Sy600E0AckRequest: {
+        type: "object",
+        properties: {
+          addressHex: { type: "string", example: "AABBCCDD" },
+        },
       },
       DrugDispenserRequest: {
         type: "object",

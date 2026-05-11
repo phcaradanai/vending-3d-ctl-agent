@@ -114,20 +114,64 @@ Notes:
 
 ### Endpoints
 
-- **`GET /api/v1/health`** — Process uptime, MQTT status, serial port health, and `writeTimeoutMs` from config.
+- **`GET /api/v1/health`** — Process uptime, MQTT status, serial port health, and write timeout config.
 
-- **`POST /api/v1/serial/vending/write`** — Sends hex bytes to the vending port and **waits** for a response (RX) up to `SERIAL_WRITE_TIMEOUT_MS`. Uses extended HTTP timeout from `SERIAL_API_TIMEOUT_MS` on this route only.  
+- **`POST /api/v1/serial/vending/write`** — Sends hex bytes to vending serial and waits for RX.  
   Body:
 
   ```json
   { "data": "EE010000" }
   ```
 
-  Success response includes `responseHex` and `responseBytes`.
+- **`POST /api/v1/serial/navigation-lights/write`** — Sends navigation command and waits for RX (with retry queue on timeout).  
+  Body:
 
-- **`POST /api/v1/serial/navigation-lights/write`** — Same contract as vending (hex payload, waits for RX with `SERIAL_WRITE_TIMEOUT_MS`). No separate `SERIAL_API_TIMEOUT_MS` middleware on this route.
+  ```json
+  { "data": { "act": "led", "cmd": [1, 165, 0, 128, 0, 1] } }
+  ```
+
+- **`POST /api/v1/serial/navigation-lights/write-no-wait`** — Fire-and-forget mode (TX + drain only, no RX wait).  
+  Body:
+
+  ```json
+  { "data": { "act": "led", "cmd": [1, 165, 0, 128, 0, 1] } }
+  ```
 
 - **`POST /api/v1/vending/drugDispenser`** — Dispenser command payload (requires `prescription`).
+
+### SY600 Command API (`/api/v1/sy600/*`)
+
+These endpoints build SY600 binary frames, send via vending serial, then decode response to readable fields and status text.
+
+- `POST /api/v1/sy600/c3/lift`  
+  `{ "target": 1 }` (`0` reset, `1..7`, or `0x55..0x57`)
+- `POST /api/v1/sy600/c4/micro-step`  
+  `{ "layer": 1, "channelStart": 0, "channelEnd": 5, "repeat": 3 }` (`repeat` optional, 1..100)
+- `POST /api/v1/sy600/c5/output-door`  
+  `{ "action": 1, "doorNo": 1 }`
+- `POST /api/v1/sy600/c6/conveyor`  
+  `{ "direction": 0, "seconds": 3 }`
+- `POST /api/v1/sy600/c7/pickup-door`  
+  `{ "action": 1, "doorNo": 1 }`
+- `POST /api/v1/sy600/24/reset-scan`  
+  `{ "resetDoor": 1, "resetLift": 1 }`
+- `POST /api/v1/sy600/35/infrared`  
+  `{ "sensorType": 0 }`
+- `POST /api/v1/sy600/39/microswitch`  
+  `{}`
+- `POST /api/v1/sy600/28/dispense`  
+  `{ "layerAddressHex":"AABBCCDD", "channelStart":0, "channelEnd":0, "orderIdHex":"0011223344556677" }`
+- `POST /api/v1/sy600/e0/ack`  
+  `{ "addressHex":"AABBCCDD" }` (optional)
+
+### SY600 Environment
+
+Add these env vars for SY600 framing:
+
+```env
+SY600_DEVICE_ADDRESS_HEX=AABBCCDD
+SY600_USE_CRC16=false
+```
 
 ## API logging
 
