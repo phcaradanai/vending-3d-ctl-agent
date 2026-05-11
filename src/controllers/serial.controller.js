@@ -49,6 +49,12 @@ export function healthController(_req, res) {
 export async function writeVendingSerialController(req, res, next) {
   try {
     const result = await writeVendingSerialData(req.body.data);
+
+    const vendingPath = getSerialConfig().vending.path;
+    console.log(
+      `[serial:${vendingPath}] writeVendingSerialController result ->`,
+      JSON.stringify(result)
+    );
     return res.json(result);
   } catch (error) {
     return next(error);

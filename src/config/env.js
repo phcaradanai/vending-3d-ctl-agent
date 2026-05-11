@@ -90,11 +90,11 @@ export const SERIAL_QR_NFC_BAUD_RATE = toNumber(
 );
 export const SERIAL_WRITE_TIMEOUT_MS = toNumber(
   process.env.SERIAL_WRITE_TIMEOUT_MS,
-  3000
+  (1 * (50 * 1000))
 );
 export const SERIAL_API_TIMEOUT_MS = toNumber(
   process.env.SERIAL_API_TIMEOUT_MS,
-  SERIAL_WRITE_TIMEOUT_MS + 2000
+  (1 * (60 * 1000))
 );
 export const MQTT_ENABLED = toBoolean(process.env.MQTT_ENABLED, false);
 export const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || "mqtt://127.0.0.1:1883";
@@ -112,7 +112,7 @@ export const MQTT_QRNFC_MIFARE_SIGNATURE = toHexByteArray(
 );
 export const MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX = toRegex(
   process.env.MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX ||
-    "([0-9a-f\\-]{36})_(\\d{8})_(\\d+)_(\\d+)_(IN|OUT)_(\\d{14})",
+  "([0-9a-f\\-]{36})_(\\d{8})_(\\d+)_(\\d+)_(IN|OUT)_(\\d{14})",
   /([0-9a-f\-]{36})_(\d{8})_(\d+)_(\d+)_(IN|OUT)_(\d{14})/i
 );
 export const API_LOG_RETENTION_DAYS = toNumber(

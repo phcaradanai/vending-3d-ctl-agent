@@ -13,3 +13,4 @@ CMD ["node", "index.js"]
 
 
 # docker build -t registry.rd.ns.co.th/vending-agent:0.0.1 .
+docker build  --no-cache  -t registry.rd.ns.co.th/vending-agent:0.0.3 .

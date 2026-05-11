@@ -271,8 +271,8 @@ async function writeToPort(port, data) {
   }
   const buffer = Buffer.from(normalizedHex, "hex");
 
-  console.log(`[serial:${port.path}] tx -> ${normalizedHex}`);
-  console.log(`[serial:${port.path}] tx [buffer] ->`, Array.from(buffer));
+  console.log(`[serial:${port.path}] TX -> ${normalizedHex}`);
+  // console.log(`[serial:${port.path}] tx [buffer] ->`, Array.from(buffer));
   const responseChunk = await new Promise((resolve, reject) => {
     // Max time budget for the full request/response.
     const timeout = setTimeout(() => {
@@ -305,6 +305,9 @@ async function writeToPort(port, data) {
     const onData = (chunk) => {
       hasAnyResponse = true;
       chunks.push(chunk);
+      const chunkHex = chunk.toString("hex").toUpperCase();
+      // console.log(`[serial:${port.path}] rx-chunk -> ${chunkHex}`);
+            // console.log(`[serial:${port.path}] rx-chunk [buffer] -> ${chunkHex}`, Array.from(chunk));
       if (responseIdleTimer) clearTimeout(responseIdleTimer);
       responseIdleTimer = setTimeout(completeResponse, responseIdleMs);
     };
@@ -338,7 +341,7 @@ async function writeToPort(port, data) {
     });
   });
   const responseHex = responseChunk.toString("hex").toUpperCase();
-  console.log(`[serial:${port.path}] awaited-rx -> ${responseHex}`);
+  console.log(`[serial:${port.path}] writeToPort awaited-RX -> ${responseHex}`);
 
   return {
     success: true,
@@ -356,6 +359,11 @@ export async function writeVendingSerialData(data) {
   );
   const result = await writeToPort(vendingSerialPort, data);
   vendingLastWriteAt = new Date().toISOString();
+
+  console.log(
+    `[serial:${vendingSerialPort.path}] writeVendingSerialData result ->`,
+    JSON.stringify(result)
+  );
   return result;
 }
 
