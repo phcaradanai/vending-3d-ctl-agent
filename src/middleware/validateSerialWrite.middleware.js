@@ -1,4 +1,4 @@
-export function validateSerialWrite(req, res, next) {
+export async function validateSerialWrite(req, res, next) {
   const { data } = req.body;
 
   if (typeof data !== "string" || !data.length) {
@@ -12,7 +12,7 @@ export function validateSerialWrite(req, res, next) {
 
 
 
-export function validateSerialWriteNavigationLights(req, res, next) {
+export async function validateSerialWriteNavigationLights(req, res, next) {
   const { data } = req.body;
 
   // Check that data is a plain object and not an array or null

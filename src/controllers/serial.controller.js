@@ -15,7 +15,7 @@ import {
   SY600_USE_CRC16,
 } from "../config/env.js";
 
-export function healthController(_req, res) {
+export async function healthController(_req, res) {
   const serialConfig = getSerialConfig();
   const serialHealth = getSerialHealthSnapshot();
   const mqtt = getMqttStatus();

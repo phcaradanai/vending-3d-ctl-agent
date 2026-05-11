@@ -12,108 +12,129 @@ import {
   sy600ResetScanController,
 } from "../controllers/sy600.controller.js";
 
+/**
+ * SY600 vending protocol — HTTP ชั้นบนของเฟรม binary (ส่งผ่านพอร์ต vending serial).
+ *
+ * Prefix จริง: /api/v1  (ดู app mount)
+ *
+ * ค่าเริ่มต้นเฟรม: `SY600_DEVICE_ADDRESS_HEX`, `SY600_USE_CRC16` ใน .env
+ */
+
 const sy600Router = Router();
 
-// POST /sy600/c3/lift
-// Purpose: Control elevator/lift position.
-// Body example:
-// {
-//   "target": 1
-// }
-// target:
-// - 0 => reset to origin
-// - 1..7 => move to floor 1..7
-// - 0x55..0x57 => move to output position 1..3
-sy600Router.post("/sy600/c3/lift", sy600LiftController); // Work^^
-// POST /sy600/c4/micro-step
-// Purpose: Trigger micro-step dispensing at layer/channel range.
-// Body example:
-// {
-//   "layer": 1,
-//   "channelStart": 0,
-//   "channelEnd": 5,
-//   "repeat": 3
-// }
-// repeat is optional (default 1, allowed 1..100).
-sy600Router.post("/sy600/c4/micro-step", sy600MicroStepController); // Work^^
-// POST /sy600/c5/output-door
-// Purpose: Open/close output door.
-// Body example:
-// {
-//   "action": 1,
-//   "doorNo": 1
-// }
-// action: 0=close, 1=open
-sy600Router.post("/sy600/c5/output-door", sy600OutputDoorController); // Work^^
-// POST /sy600/c6/conveyor
-// Purpose: Run platform conveyor.
-// Body example:
-// {
-//   "direction": 0,
-//   "seconds": 3
-// }
-// direction: 0=forward, 1=reverse
-// seconds: 0 means device default duration.
-sy600Router.post("/sy600/c6/conveyor", sy600ConveyorController);// Work^^
-// POST /sy600/c7/pickup-door
-// Purpose: Open/close pickup door.
-// Body example:
-// {
-//   "action": 1,
-//   "doorNo": 1
-// }
-// action: 0=close, 1=open
-sy600Router.post("/sy600/c7/pickup-door", sy600PickupDoorController);// Work^^
-// POST /sy600/24/reset-scan
-// Purpose: Reset door/lift and scan machine structure.
-// Body example:
-// {
-//   "resetDoor": 1,
-//   "resetLift": 1
-// }
-// value: 1=reset, 0=skip
-sy600Router.post("/sy600/24/reset-scan", sy600ResetScanController);// Work^^
-// POST /sy600/35/infrared
-// Purpose: Read infrared/hall state by sensor type.
-// Body example:
-// {
-//   "sensorType": 0
-// }
-// sensorType:
-// - 0=drop sensor
-// - 1=platform1 infrared
-// - 2=anti-pinch1 infrared
-// - 3=reserved
-// - 4=platform2 infrared
-// - 5=anti-pinch2 infrared
-// - 6=platform3 infrared
-// - 7=anti-pinch3 infrared
-sy600Router.post("/sy600/35/infrared", sy600InfraredController);// Work^^
-// GET /sy600/39/microswitch
-// Purpose: Read microswitch status map.
-// No request body required.
-sy600Router.get("/sy600/39/microswitch", sy600MicroswitchController); //ISSUE --*
-// Backward compatibility for older clients (deprecated).
-sy600Router.post("/sy600/39/microswitch", sy600MicroswitchController);  //ISSUE --*
-// POST /sy600/28/dispense
-// Purpose: Dispense by channel range and order id.
-// Body example:
-// {
-//   "layerAddressHex": "AABBCCDD",
-//   "channelStart": 0,
-//   "channelEnd": 0,
-//   "orderIdHex": "0011223344556677"
-// }
-// orderIdHex must be 16 hex chars (8 bytes).
+// =============================================================================
+// POST /sy600/c3/lift  — คุมตำแหน่งลิฟท์ / ชั้น / จุดจ่าย
+// =============================================================================
+// Body: { "target": <number> }
+//
+// | target (ตัวเลขที่ส่งใน JSON) | hex   | ใช้ทำอะไร (โดยทั่วไป) |
+// |-----------------------------|-------|------------------------|
+// | 0                           | 0x00  | รีเซ็ต / จุดอ้างอิง     |
+// | 1 … 7                       | 0x01… | ชั้นคลัง (บน/ล่างตามคู่มือเครื่อง) |
+// | 85, 86, 87                  | 0x55, 0x56, 0x57 | จุดส่งของ / จุดจ่าย (มัก map กับประตูจ่าย 1–3; ยืนยันกับ vendor) |
+//
+// หมายเหตุ: พาไป “จุดส่งของ” ใช้ target 85/86/87 แล้วมักตามด้วย C5 output-door
+//           ตาม doorNo ที่ตรงกับประตูนั้น
+// =============================================================================
+sy600Router.post("/sy600/c3/lift", sy600LiftController);
+
+// =============================================================================
+// POST /sy600/c4/micro-step  — สั่ง micro-step จ่ายตามช่วงช่อง
+// =============================================================================
+// Body:
+//   {
+//     "layer": <1..255>,
+//     "channelStart": <uint>,
+//     "channelEnd": <uint>,
+//     "repeat": <optional 1..100>
+//   }
+//
+// repeat — จำนวนรอบส่งคำสั่งเดิมซ้ำต่อเนื่อง (ค่าเริ่มต้น 1 ถ้าไม่ส่ง)
+// =============================================================================
+sy600Router.post("/sy600/c4/micro-step", sy600MicroStepController);
+
+// =============================================================================
+// POST /sy600/c5/output-door  — เปิด/ปิด ประตูจ่าย (output)
+// =============================================================================
+// Body: { "action": 0|1, "doorNo": <1..255> }
+//
+//   action: 0 = ปิด, 1 = เปิด
+// =============================================================================
+sy600Router.post("/sy600/c5/output-door", sy600OutputDoorController);
+
+// =============================================================================
+// POST /sy600/c6/conveyor  — สายพาน / แพลตฟอร์ม ทิศทางและเวลา
+// =============================================================================
+// Body: { "direction": 0|1, "seconds": <0..255> }
+//
+//   direction: 0 = forward, 1 = reverse
+//   seconds:   0 = ใช้เวลา default ของอุปกรณ์
+// =============================================================================
+sy600Router.post("/sy600/c6/conveyor", sy600ConveyorController);
+
+// =============================================================================
+// POST /sy600/c7/pickup-door  — เปิด/ปิด ประตูรับ (pickup)
+// =============================================================================
+// Body: { "action": 0|1, "doorNo": <1..255> }
+//
+//   action: 0 = ปิด, 1 = เปิด
+// =============================================================================
+sy600Router.post("/sy600/c7/pickup-door", sy600PickupDoorController);
+
+// =============================================================================
+// POST /sy600/24/reset-scan  — รีเซ็ตประตู/ลิฟท์ และอ่านข้อมูลโครงสร้างเครื่อง
+// =============================================================================
+// Body: { "resetDoor": 0|1, "resetLift": 0|1 }
+//
+//   1 = ให้รีเซ็ต, 0 = ข้าม
+// =============================================================================
+sy600Router.post("/sy600/24/reset-scan", sy600ResetScanController);
+
+// =============================================================================
+// POST /sy600/35/infrared  — อ่านสถานะ IR / hall ตามประเภทเซนเซอร์
+// =============================================================================
+// Body: { "sensorType": 0..7 }
+//
+//   0 = drop
+//   1 = platform1
+//   2 = anti-pinch1
+//   3 = reserved
+//   4 = platform2
+//   5 = anti-pinch2
+//   6 = platform3
+//   7 = anti-pinch3
+// =============================================================================
+sy600Router.post("/sy600/35/infrared", sy600InfraredController);
+
+// =============================================================================
+// GET  /sy600/39/microswitch  — อ่านชุดสถานะ microswitch (แนะนำ)
+// POST /sy600/39/microswitch  — คู่ความเข้ากันเก่า (deprecated)
+// =============================================================================
+// ไม่มี body (GET). ลำดับ byte ใน response ตาม decode ใน sy600.service / Swagger
+// =============================================================================
+sy600Router.get("/sy600/39/microswitch", sy600MicroswitchController);
+sy600Router.post("/sy600/39/microswitch", sy600MicroswitchController);
+
+// =============================================================================
+// POST /sy600/28/dispense  — สั่งจ่ายตามช่วงช่อง + order id 8 byte
+// =============================================================================
+// Body:
+//   {
+//     "layerAddressHex": "AABBCCDD",   // optional; default จาก env
+//     "channelStart": <uint>,
+//     "channelEnd": <uint>,
+//     "orderIdHex": "0011223344556677"  // ต้อง 16 hex chars = 8 bytes
+//   }
+// =============================================================================
 sy600Router.post("/sy600/28/dispense", sy600ChannelDispenseController);
-// POST /sy600/e0/ack
-// Purpose: ACK active error report (E0) to stop repeated report.
-// Body example:
-// {
-//   "addressHex": "AABBCCDD"
-// }
-// addressHex is optional; defaults to SY600_DEVICE_ADDRESS_HEX.
+
+// =============================================================================
+// POST /sy600/e0/ack  — ACK รายงานข้อผิดพลาดแบบ active (หยุดรายงานซ้ำ)
+// =============================================================================
+// Body (optional): { "addressHex": "AABBCCDD" }
+//
+// ถ้าไม่ส่ง addressHex ใช้ค่า SY600_DEVICE_ADDRESS_HEX จาก env
+// =============================================================================
 sy600Router.post("/sy600/e0/ack", sy600AckE0Controller);
 
 export default sy600Router;
-

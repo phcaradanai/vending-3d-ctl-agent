@@ -2,8 +2,8 @@
 
 Node.js (ESM) API for vending control with three serial channels:
 
-- **Vending** — command/response over serial (HTTP waits for RX after each write).
-- **Navigation lights** — same write-and-wait pattern as vending.
+- **Vending** — hex payloads over serial; HTTP waits for RX after each write (SY600 helpers use this port).
+- **Navigation lights** — JSON `data` object is serialized to a line (`JSON.stringify` + newline), then sent; HTTP can wait for RX (with retries) or use fire-and-forget.
 - **QR/NFC** — scanned data is read continuously; optional MQTT publish when enabled.
 
 ## Requirements
@@ -39,6 +39,10 @@ Copy `.env.example` to `.env` and adjust values.
 | `SERIAL_QR_NFC_BAUD_RATE` | Baud rate (default `9600`) |
 | `SERIAL_WRITE_TIMEOUT_MS` | Max time to wait for **any** serial RX after a write (application serial layer). Default in code: `50000` (50s) if unset. |
 | `SERIAL_API_TIMEOUT_MS` | HTTP **socket** timeout for `POST /api/v1/serial/vending/write` only (`req`/`res` timeout). Default in code: `60000` (60s) if unset. Should be **≥** `SERIAL_WRITE_TIMEOUT_MS` so the API does not close before the serial wait finishes. |
+| `SERIAL_WRITE_DEBUG` | Log TX/RX hex and byte arrays for serial writes (`true`/`false`, default `false`). |
+| `SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG` | Extra logging around navigation-lights framing (`false` by default). |
+| `SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY` | After a **504** RX timeout on nav lights, how many **extra** attempts (default `2` → up to 3 tries total). |
+| `SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS` | Pause between nav-light retries in ms (default `250`). |
 
 Other common variables:
 
@@ -114,7 +118,11 @@ Notes:
 
 ### Endpoints
 
-- **`GET /api/v1/health`** — Process uptime, MQTT status, serial port health, and write timeout config.
+- **`GET /api/v1/health`** — Structured status:
+  - **`summary`** — `systemStatus`, `alertsCount`, serial/MQTT/SY600 quick fields.
+  - **`devices`** — Serial channels (config + live connection), MQTT snapshot + topic routing, SY600 transport/protocol hints.
+  - **`diagnostics`** — Process uptime, `memoryUsage`, serial policy (`writeTimeoutMs`, `apiTimeoutMs`, navigation retry), and app time/timezone.
+  - **`alerts`** — Warnings (e.g. serial port down, MQTT enabled but disconnected).
 
 - **`POST /api/v1/serial/vending/write`** — Sends hex bytes to vending serial and waits for RX.  
   Body:
@@ -123,12 +131,16 @@ Notes:
   { "data": "EE010000" }
   ```
 
-- **`POST /api/v1/serial/navigation-lights/write`** — Sends navigation command and waits for RX (with retry queue on timeout).  
+- **`POST /api/v1/serial/navigation-lights/write`** — Sends navigation command and waits for RX (with retries on timeout).  
   Body:
 
   ```json
   { "data": { "act": "led", "cmd": [1, 165, 0, 128, 0, 1] } }
   ```
+
+  For `act: "led"`, `cmd` is six values: **[first LED, last LED, R, G, B, mode]** — R/G/B are `0..255`; **mode `0` = on steady**, **`1` = flash**.
+
+  **200 response** echoes your payload and wraps the serial layer: `{ "success": true, "accepted": { ... }, "serialResponse": { "success", "bytes", "responseHex", "responseBytes" } }`.
 
 - **`POST /api/v1/serial/navigation-lights/write-no-wait`** — Fire-and-forget mode (TX + drain only, no RX wait).  
   Body:
@@ -136,6 +148,8 @@ Notes:
   ```json
   { "data": { "act": "led", "cmd": [1, 165, 0, 128, 0, 1] } }
   ```
+
+  Same `cmd` meaning as the write endpoint above.
 
 - **`POST /api/v1/vending/drugDispenser`** — Dispenser command payload (requires `prescription`).
 
@@ -157,8 +171,8 @@ These endpoints build SY600 binary frames, send via vending serial, then decode 
   `{ "resetDoor": 1, "resetLift": 1 }`
 - `POST /api/v1/sy600/35/infrared`  
   `{ "sensorType": 0 }`
-- `POST /api/v1/sy600/39/microswitch`  
-  `{}`
+- `GET /api/v1/sy600/39/microswitch` — Preferred (no body).  
+- `POST /api/v1/sy600/39/microswitch` — Deprecated alias (empty body `{}`); same behavior as GET.
 - `POST /api/v1/sy600/28/dispense`  
   `{ "layerAddressHex":"AABBCCDD", "channelStart":0, "channelEnd":0, "orderIdHex":"0011223344556677" }`
 - `POST /api/v1/sy600/e0/ack`  
@@ -185,7 +199,8 @@ SY600_USE_CRC16=false
 ## Serial behavior
 
 - All serial ports are opened and listened to at startup (lazy open + reconnect on error/close).
-- **Vending** and **navigation lights**: each HTTP write registers a one-shot listener, sends bytes, then waits for RX (idle gap ~80ms ends the frame, or `SERIAL_WRITE_TIMEOUT_MS` overall).
+- **Vending**: hex write → wait for RX (idle gap ~80ms ends the frame, or `SERIAL_WRITE_TIMEOUT_MS` overall). Writes are queued per port.
+- **Navigation lights**: object `data` → JSON line + `\n` → bytes; wait path uses the same RX idle logic and can **retry** on timeout (`SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY`, `SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS`). **No-wait** path only drains after write.
 - **QR/NFC**: framing is newline-based with a short idle fallback; payloads can be published to `MQTT_QRNFC_TOPIC` when `MQTT_ENABLED=true`.
 
 ## Makefile commands

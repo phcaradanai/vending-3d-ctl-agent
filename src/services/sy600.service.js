@@ -307,6 +307,19 @@ function parseOrderIdBytes(orderIdHex) {
   return Array.from(Buffer.from(normalized, "hex"));
 }
 
+/**
+ * SY600 **0xC3** — สั่งตำแหน่งลิฟท์
+ *
+ * Payload: `[ target, 0x00 ]`
+ *
+ * | target (dec) | hex    | โดยทั่วไป        |
+ * |---------------|--------|------------------|
+ * | 0             | 0x00   | รีเซ็ต / origin   |
+ * | 1–7           | 0x01+  | ชั้นคลัง         |
+ * | 85, 86, 87    | 0x55–0x57 | จุดจ่าย / จุดส่งของ (ยืนยัน mapping กับ vendor) |
+ *
+ * @param {{ target: number }} params
+ */
 export async function sy600LiftControl({ target }) {
   return sendSy600(0xc3, [ensureByte(target, "target"), 0x00]);
 }

@@ -1,4 +1,4 @@
-export function notFoundHandler(_req, res) {
+export async function notFoundHandler(_req, res) {
   return res.status(404).json({
     error: "Route not found",
   });

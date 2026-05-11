@@ -1,4 +1,4 @@
-export function validateDispenserCmd(req, res, next) {
+export async function validateDispenserCmd(req, res, next) {
     const { prescription } = req.body;
   
     if (typeof prescription !== "string" || !prescription.length) {
