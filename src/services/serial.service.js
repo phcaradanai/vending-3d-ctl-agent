@@ -1,5 +1,6 @@
 import { SerialPort } from "serialport";
 import {
+  MQTT_QRNFC_MIFARE_SIGNATURE,
   SERIAL_NAVIGATION_LIGHTS,
   SERIAL_NAVIGATION_LIGHTS_BAUD_RATE,
   SERIAL_QR_NFC,
@@ -84,6 +85,45 @@ function flushQrNfcFrame(buffer) {
 
   console.log(`[serial:qr-nfc] payload -> ${payload}`);
   console.log(`[serial:qr-nfc] Buffer ->`, Array.from(buffer));
+
+  
+
+  // แยกข้อมูล mifare: HEADER (5 bytes), UID (4 bytes), Data/Other (เหลือ)
+  // ตัวอย่าง: [HEADER][UID][DATA/อื่นๆ]
+  // มี signature จาก config: MQTT_QRNFC_MIFARE_SIGNATURE
+  try {
+    // import อะไรเพิ่มไม่ได้ ใช้ global เอาจาก config
+    const headerLength = MQTT_QRNFC_MIFARE_SIGNATURE.length;
+    if (
+      buffer.length >= headerLength + 4 && // HEADER + UID อย่างต่ำ
+      MQTT_QRNFC_MIFARE_SIGNATURE.every(
+        (val, idx) => buffer[idx] === val
+      )
+    ) {
+      // ตรง signature mifare
+      const header = Array.from(buffer.slice(0, headerLength));
+      const uid = Array.from(buffer.slice(headerLength, headerLength + 4));
+      const rest = Array.from(buffer.slice(headerLength + 4));
+      console.log(`[serial:qr-nfc][Mifare] header:`, header, `uid:`, uid, `rest:`, rest);
+      // เพิ่ม field พิเศษ ส่งไปด้วย
+      publishQrNfcPayload({
+        payloadText: payload,
+        payloadBytes: Array.from(buffer),
+        portPath: qrNfcSerialPort?.path || SERIAL_QR_NFC,
+        mifare: {
+          header,
+          uid,
+          rest,
+        }
+      }).catch((error) => {
+        console.error(`[mqtt] publish failed for qr-nfc/mifare: ${error.message}`);
+      });
+      return; // เสร็จแล้วไม่ต้อง publish ข้างล่างซ้ำ
+    }
+  } catch (err) {
+    console.error("[serial:qr-nfc][Mifare] frame parse error:", err);
+  }
+  
   publishQrNfcPayload({
     payloadText: payload,
     payloadBytes: Array.from(buffer),
