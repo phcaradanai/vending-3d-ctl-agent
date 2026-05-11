@@ -96,6 +96,11 @@ export const SERIAL_API_TIMEOUT_MS = toNumber(
   process.env.SERIAL_API_TIMEOUT_MS,
   (1 * (60 * 1000))
 );
+export const SERIAL_WRITE_DEBUG = toBoolean(process.env.SERIAL_WRITE_DEBUG, false);
+export const SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG = toBoolean(
+  process.env.SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG,
+  false
+);
 export const MQTT_ENABLED = toBoolean(process.env.MQTT_ENABLED, false);
 export const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || "mqtt://127.0.0.1:1883";
 export const MQTT_CLIENT_ID = process.env.MQTT_CLIENT_ID || "vending-3d-ctl";

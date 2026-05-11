@@ -5,7 +5,11 @@ const swaggerSpec = {
   info: {
     title: "Vending 3D Control API",
     version: "1.0.0",
-    description: "API for vending serial control, dispenser command, and service health.",
+    description:
+      "API for vending serial control, dispenser command, and service health. " +
+      "Serial write endpoints accept an even-length hex string in `data`, send it as raw bytes, " +
+      "then wait for device RX until idle or `SERIAL_WRITE_TIMEOUT_MS`. " +
+      "`POST /serial/vending/write` also uses HTTP `SERIAL_API_TIMEOUT_MS` on the socket (see README).",
   },
   servers: [
     {
@@ -35,7 +39,12 @@ const swaggerSpec = {
     "/serial/vending/write": {
       post: {
         tags: ["Serial"],
-        summary: "Write string data to vending serial port",
+        summary: "Write hex payload to vending serial and wait for RX",
+        description:
+          "Body `data` must be an even-length hexadecimal string (optional spaces are ignored). " +
+          "The server writes raw bytes to the vending port, waits for response data, then returns `responseHex` / `responseBytes`. " +
+          "If no RX arrives within `SERIAL_WRITE_TIMEOUT_MS`, the handler responds with **504**. " +
+          "This route sets a longer HTTP socket timeout (`SERIAL_API_TIMEOUT_MS`); if the socket times out first, **504** is returned with `error: Request timeout`.",
         requestBody: {
           required: true,
           content: {
@@ -78,7 +87,9 @@ const swaggerSpec = {
             },
           },
           504: {
-            description: "Serial write timeout",
+            description:
+              "Timeout: no serial RX within `SERIAL_WRITE_TIMEOUT_MS`, or HTTP socket timeout (`SERIAL_API_TIMEOUT_MS`) on this route. " +
+              "Body shape is usually `{ error, details }` (see ErrorResponse).",
             content: {
               "application/json": {
                 schema: {
@@ -93,7 +104,10 @@ const swaggerSpec = {
     "/serial/navigation-lights/write": {
       post: {
         tags: ["Serial"],
-        summary: "Write string data to navigation lights serial port",
+        summary: "Write hex payload to navigation-lights serial and wait for RX",
+        description:
+          "Same contract as vending write: even-length hex in `data`, raw TX, wait for RX until idle or `SERIAL_WRITE_TIMEOUT_MS`. " +
+          "This route does not apply the separate `SERIAL_API_TIMEOUT_MS` middleware used on vending write.",
         requestBody: {
           required: true,
           content: {
@@ -136,7 +150,7 @@ const swaggerSpec = {
             },
           },
           504: {
-            description: "Serial write timeout",
+            description: "No serial RX within `SERIAL_WRITE_TIMEOUT_MS` (or upstream closed the connection).",
             content: {
               "application/json": {
                 schema: {
@@ -195,6 +209,11 @@ const swaggerSpec = {
           status: { type: "string", example: "degraded" },
           timestamp: { type: "string", format: "date-time" },
           serialReady: { type: "boolean", example: false },
+          mqtt: {
+            type: "object",
+            description: "MQTT client status (when QR/NFC publishing is configured)",
+            additionalProperties: true,
+          },
           process: {
             type: "object",
             properties: {
@@ -219,13 +238,18 @@ const swaggerSpec = {
                 properties: {
                   vending: { $ref: "#/components/schemas/SerialPortHealth" },
                   navigationLights: { $ref: "#/components/schemas/SerialPortHealth" },
+                  qrNfc: { $ref: "#/components/schemas/SerialPortHealth" },
                 },
               },
-              writeTimeoutMs: { type: "number", example: 3000 },
+              writeTimeoutMs: {
+                type: "number",
+                example: 50000,
+                description: "Value of SERIAL_WRITE_TIMEOUT_MS used when waiting for serial RX after a write",
+              },
             },
           },
         },
-        required: ["status", "timestamp", "serialReady", "serial"],
+        required: ["status", "timestamp", "serialReady", "mqtt", "serial"],
       },
       SerialPortHealth: {
         type: "object",
@@ -246,7 +270,11 @@ const swaggerSpec = {
       SerialWriteRequest: {
         type: "object",
         properties: {
-          data: { type: "string", example: "HELLO\\n" },
+          data: {
+            type: "string",
+            example: "EE010000",
+            description: "Even-length hex string to send as raw bytes; spaces are allowed and stripped",
+          },
         },
         required: ["data"],
       },
@@ -254,9 +282,20 @@ const swaggerSpec = {
         type: "object",
         properties: {
           success: { type: "boolean", example: true },
-          bytes: { type: "number", example: 6 },
+          bytes: { type: "number", example: 4 },
+          responseHex: {
+            type: "string",
+            example: "EE0100AA",
+            description: "Concatenated RX bytes as uppercase hex",
+          },
+          responseBytes: {
+            type: "array",
+            items: { type: "integer" },
+            example: [238, 1, 0, 170],
+            description: "RX bytes as decimal integers",
+          },
         },
-        required: ["success", "bytes"],
+        required: ["success", "bytes", "responseHex", "responseBytes"],
       },
       DrugDispenserRequest: {
         type: "object",

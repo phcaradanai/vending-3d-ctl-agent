@@ -4,7 +4,9 @@ import {
   writeVendingSerialController,
 } from "../controllers/serial.controller.js";
 import { SERIAL_API_TIMEOUT_MS } from "../config/env.js";
-import { validateSerialWrite } from "../middleware/validateSerialWrite.middleware.js";
+import { validateSerialWrite,
+    validateSerialWriteNavigationLights,
+} from "../middleware/validateSerialWrite.middleware.js";
 
 const serialRouter = Router();
 
@@ -29,7 +31,8 @@ serialRouter.post(
 );
 serialRouter.post(
   "/serial/navigation-lights/write",
-  validateSerialWrite,
+//   setNavigationLightsWriteApiTimeout,
+  validateSerialWriteNavigationLights,
   writeNavigationLightsSerialController
 );
 

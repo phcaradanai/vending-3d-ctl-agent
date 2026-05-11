@@ -1,13 +1,15 @@
 # vending-3d-ctl
 
-Node.js (ESM) API for vending controller with dual serial channels:
-- Vending controller serial
-- Navigation lights serial
+Node.js (ESM) API for vending control with three serial channels:
+
+- **Vending** — command/response over serial (HTTP waits for RX after each write).
+- **Navigation lights** — same write-and-wait pattern as vending.
+- **QR/NFC** — scanned data is read continuously; optional MQTT publish when enabled.
 
 ## Requirements
 
 - Node.js 18+
-- Access to serial devices (Linux example: `/dev/ttyUSB0`, `/dev/ttyUSB1`)
+- Access to serial devices (Linux: `/dev/ttyUSB*`, Windows: `COM*`)
 
 ## Install
 
@@ -23,31 +25,43 @@ make install
 
 ## Configuration
 
-Copy `.env.example` to `.env` and adjust values:
+Copy `.env.example` to `.env` and adjust values.
+
+### Serial and timeouts
+
+| Variable | Purpose |
+|----------|---------|
+| `SERIAL_VENDING` | Vending port path (e.g. `COM6`, `/dev/ttyUSB0`) |
+| `SERIAL_VENDING_BAUD_RATE` | Baud rate (default `9600`) |
+| `SERIAL_NAVIGATION_LIGHTS` | Navigation lights port |
+| `SERIAL_NAVIGATION_LIGHTS_BAUD_RATE` | Baud rate (default `9600`) |
+| `SERIAL_QR_NFC` | QR/NFC reader port |
+| `SERIAL_QR_NFC_BAUD_RATE` | Baud rate (default `9600`) |
+| `SERIAL_WRITE_TIMEOUT_MS` | Max time to wait for **any** serial RX after a write (application serial layer). Default in code: `50000` (50s) if unset. |
+| `SERIAL_API_TIMEOUT_MS` | HTTP **socket** timeout for `POST /api/v1/serial/vending/write` only (`req`/`res` timeout). Default in code: `60000` (60s) if unset. Should be **≥** `SERIAL_WRITE_TIMEOUT_MS` so the API does not close before the serial wait finishes. |
+
+Other common variables:
 
 ```env
-PORT=3000
-VENDING_CODE=FFFFFFFF
+PORT=3303
+CUSTOMER_CODE=wnyh
+VENDING_CODE=FFFFFF12
 DOOR_TYPE_STANDBY=[1,2,3]
 DOOR_TYPE_NOW=[1,2,3]
 APP_TIMEZONE=Asia/Bangkok
 API_LOG_RETENTION_DAYS=30
-Serial_VENDING=/dev/ttyUSB0
-SERIAL_VENDING_BAUD_RATE=9600
-Serial_NAVIGATION_LIGHTS=/dev/ttyUSB1
-SERIAL_NAVIGATION_LIGHTS_BAUD_RATE=9600
-SERIAL_QR_NFC=/dev/ttyUSB2
-SERIAL_QR_NFC_BAUD_RATE=9600
-SERIAL_WRITE_TIMEOUT_MS=3000
+
 MQTT_ENABLED=false
 MQTT_BROKER_URL=mqtt://127.0.0.1:1883
 MQTT_CLIENT_ID=vending-3d-ctl
-MQTT_QRNFC_TOPIC=vending/qr-nfc/raw
+MQTT_QRNFC_TOPIC=hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader
 ```
 
 Notes:
-- On Windows, serial path is usually `COM3`, `COM4`, etc.
-- `SERIAL_WRITE_TIMEOUT_MS` is used to prevent hanging HTTP requests.
+
+- On Windows, serial paths are usually `COM3`, `COM6`, etc.
+- Serial write bodies must be an **even-length hex string** (spaces allowed; they are stripped before send). Example: `EE010000`.
+- If you terminate traffic through a **reverse proxy** (Nginx, load balancer), raise upstream/read timeouts there as well, or long polls may get `502`/`504` from the proxy before this app responds.
 
 ## Run
 
@@ -89,57 +103,46 @@ docker compose down
 ```
 
 Notes:
+
 - For Linux host serial ports, uncomment `devices` in `docker-compose.yml` and map `/dev/ttyUSB*`.
-- For Windows COM ports, serial passthrough depends on Docker Desktop/WSL setup; use Linux device mapping when running in Linux environment.
+- For Windows COM ports, serial passthrough depends on Docker Desktop/WSL setup; use Linux device mapping when the container runs on Linux.
 
-## API Endpoints
+## API
 
-- Base path: `/api/v1`
+- Base path: **`/api/v1`**
+- OpenAPI (Swagger UI): **`http://localhost:<PORT>/docs`** (default port `3303`; see `PORT` in `.env`).
 
-- `GET /api/v1/health`
-  - Returns status and current serial configuration.
+### Endpoints
 
-- `POST /api/v1/serial/vending/write`
-  - Writes text command to vending serial channel.
-  - Body:
-    ```json
-    { "data": "HELLO\n" }
-    ```
+- **`GET /api/v1/health`** — Process uptime, MQTT status, serial port health, and `writeTimeoutMs` from config.
 
-- `POST /api/v1/serial/navigation-lights/write`
-  - Writes text command to navigation-lights serial channel.
-  - Body:
-    ```json
-    { "data": "LIGHT_ON\n" }
-    ```
+- **`POST /api/v1/serial/vending/write`** — Sends hex bytes to the vending port and **waits** for a response (RX) up to `SERIAL_WRITE_TIMEOUT_MS`. Uses extended HTTP timeout from `SERIAL_API_TIMEOUT_MS` on this route only.  
+  Body:
 
-- `POST /api/v1/vending/drugDispenser`
-  - Accepts dispenser command payload (requires `prescription`).
-  - Body (minimum):
-    ```json
-    { "prescription": "1234567909" }
-    ```
+  ```json
+  { "data": "EE010000" }
+  ```
 
-## Swagger
+  Success response includes `responseHex` and `responseBytes`.
 
-- Swagger UI: `http://localhost:3303/docs`
-- API server in Swagger is set to: `http://localhost:3303/api/v1`
+- **`POST /api/v1/serial/navigation-lights/write`** — Same contract as vending (hex payload, waits for RX with `SERIAL_WRITE_TIMEOUT_MS`). No separate `SERIAL_API_TIMEOUT_MS` middleware on this route.
 
-## API Logging
+- **`POST /api/v1/vending/drugDispenser`** — Dispenser command payload (requires `prescription`).
 
-- API request logs are enabled with `morgan` middleware.
-- Log file path: `logs/access.log`
+## API logging
+
+- Request logging uses `morgan`.
+- Log file: `logs/access.log`
 - Rotation: daily
-- Retention: 30 days (configurable via `API_LOG_RETENTION_DAYS`)
-- Timezone for rotation boundary: `APP_TIMEZONE=Asia/Bangkok` (UTC+7)
-- Current format is `combined` (remote IP, method, path, status, response time).
+- Retention: `API_LOG_RETENTION_DAYS` (default 30)
+- Rotation boundary timezone: `APP_TIMEZONE` (default `Asia/Bangkok`, UTC+7)
+- Format: `combined`
 
 ## Serial behavior
 
-- All serial ports are opened and listened continuously at startup.
-- Incoming hardware data is logged even when there is no API request.
-- If serial is disconnected/error, service retries connection automatically.
-- QR/NFC incoming serial data can be published to MQTT topic (`MQTT_QRNFC_TOPIC`) when `MQTT_ENABLED=true`.
+- All serial ports are opened and listened to at startup (lazy open + reconnect on error/close).
+- **Vending** and **navigation lights**: each HTTP write registers a one-shot listener, sends bytes, then waits for RX (idle gap ~80ms ends the frame, or `SERIAL_WRITE_TIMEOUT_MS` overall).
+- **QR/NFC**: framing is newline-based with a short idle fallback; payloads can be published to `MQTT_QRNFC_TOPIC` when `MQTT_ENABLED=true`.
 
 ## Makefile commands
 

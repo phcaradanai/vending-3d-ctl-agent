@@ -4,8 +4,10 @@ import {
   SERIAL_NAVIGATION_LIGHTS_BAUD_RATE,
   SERIAL_QR_NFC,
   SERIAL_QR_NFC_BAUD_RATE,
+  SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG,
   SERIAL_VENDING,
   SERIAL_VENDING_BAUD_RATE,
+  SERIAL_WRITE_DEBUG,
   SERIAL_WRITE_TIMEOUT_MS,
 } from "../config/env.js";
 import { publishQrNfcPayload } from "./mqtt.service.js";
@@ -27,7 +29,10 @@ let vendingLastWriteAt;
 let navigationLastWriteAt;
 let qrNfcFrameBuffer = Buffer.alloc(0);
 let qrNfcFrameTimer;
+let navigationFrameBuffer = Buffer.alloc(0);
+let navigationFrameTimer;
 const QR_NFC_FRAME_IDLE_MS = 80;
+const NAVIGATION_FRAME_IDLE_MS = 80;
 
 // Create/open a port lazily and reuse the same instance.
 async function getPort(currentPort, path, baudRate) {
@@ -112,6 +117,42 @@ function handleQrNfcChunk(chunk) {
   }, QR_NFC_FRAME_IDLE_MS);
 }
 
+function flushNavigationLightsFrame(buffer) {
+  if (!buffer.length) return;
+  const payload = buffer.toString("utf8").trim();
+  if (!payload) return;
+
+  if (!SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG) return;
+  console.log(`[serial:navigation-lights] payload -> ${payload}`);
+  // console.log(`[serial:navigation-lights] Buffer ->`, Array.from(buffer));
+}
+
+function handleNavigationLightsChunk(chunk) {
+  navigationFrameBuffer = Buffer.concat([navigationFrameBuffer, chunk]);
+
+  // Preferred framing: newline-delimited records.
+  let newlineIndex = navigationFrameBuffer.indexOf(0x0a);
+  while (newlineIndex !== -1) {
+    const frame = navigationFrameBuffer.subarray(0, newlineIndex).subarray(
+      0,
+      navigationFrameBuffer[newlineIndex - 1] === 0x0d
+        ? newlineIndex - 1
+        : newlineIndex
+    );
+    flushNavigationLightsFrame(frame);
+    navigationFrameBuffer = navigationFrameBuffer.subarray(newlineIndex + 1);
+    newlineIndex = navigationFrameBuffer.indexOf(0x0a);
+  }
+
+  // Fallback framing: treat silence gap as end-of-frame.
+  if (navigationFrameTimer) clearTimeout(navigationFrameTimer);
+  navigationFrameTimer = setTimeout(() => {
+    flushNavigationLightsFrame(navigationFrameBuffer);
+    navigationFrameBuffer = Buffer.alloc(0);
+    navigationFrameTimer = undefined;
+  }, NAVIGATION_FRAME_IDLE_MS);
+}
+
 function scheduleReconnect(channel, connectFn, timerRefName) {
   if (timerRefName === "vending" && vendingReconnectTimer) {
     return;
@@ -194,12 +235,13 @@ async function connectNavigationLightsPort() {
 
     // Always listen for hardware messages, even without any HTTP request.
     navigationLightsSerialPort.on("data", async (chunk) => {
-      // const logResult = await logSerialData("navigation-lights", chunk)
-      // console.log(`[serial:navigation-lights] logResult ->`, logResult);
-      // logSerialData("navigation-lights", chunk)
+      handleNavigationLightsChunk(chunk);
     }
     );
     navigationLightsSerialPort.on("close", () => {
+      if (navigationFrameTimer) clearTimeout(navigationFrameTimer);
+      flushNavigationLightsFrame(navigationFrameBuffer);
+      navigationFrameBuffer = Buffer.alloc(0);
       scheduleReconnect(
         "navigation-lights",
         connectNavigationLightsPort,
@@ -262,6 +304,12 @@ export async function initializeSerialListeners() {
 }
 
 async function writeToPort(port, data) {
+  if (typeof data !== "string") {
+    const payloadError = new Error("Serial payload must be a string hex payload");
+    payloadError.status = 400;
+    throw payloadError;
+  }
+
   // Remove spacing to support payloads like "EE01 0000 ...".
   const normalizedHex = data.replace(/\s+/g, "");
   if (!/^[\da-fA-F]+$/.test(normalizedHex) || normalizedHex.length % 2 !== 0) {
@@ -271,9 +319,25 @@ async function writeToPort(port, data) {
   }
   const buffer = Buffer.from(normalizedHex, "hex");
 
-  console.log(`[serial:${port.path}] TX -> ${normalizedHex}`);
-  // console.log(`[serial:${port.path}] tx [buffer] ->`, Array.from(buffer));
+  if (SERIAL_WRITE_DEBUG) {
+    console.log(`[serial:${port.path}] TX -> ${normalizedHex}`);
+    console.log(`[serial:${port.path}] tx [buffer] ->`, Array.from(buffer));
+  }
   const responseChunk = await new Promise((resolve, reject) => {
+    let settled = false;
+
+    const safeResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const safeReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
     // Max time budget for the full request/response.
     const timeout = setTimeout(() => {
       cleanup();
@@ -281,7 +345,7 @@ async function writeToPort(port, data) {
         `Serial response timeout after ${SERIAL_WRITE_TIMEOUT_MS} ms`
       );
       timeoutError.status = 504;
-      reject(timeoutError);
+      safeReject(timeoutError);
     }, SERIAL_WRITE_TIMEOUT_MS);
     // Consider response complete when line stays idle briefly after receiving bytes.
     const responseIdleMs = 80;
@@ -296,24 +360,29 @@ async function writeToPort(port, data) {
           `Serial response timeout after ${SERIAL_WRITE_TIMEOUT_MS} ms`
         );
         timeoutError.status = 504;
-        reject(timeoutError);
+        safeReject(timeoutError);
         return;
       }
-      resolve(Buffer.concat(chunks));
+      safeResolve(Buffer.concat(chunks));
     };
 
     const onData = (chunk) => {
       hasAnyResponse = true;
       chunks.push(chunk);
       const chunkHex = chunk.toString("hex").toUpperCase();
-      // console.log(`[serial:${port.path}] rx-chunk -> ${chunkHex}`);
-            // console.log(`[serial:${port.path}] rx-chunk [buffer] -> ${chunkHex}`, Array.from(chunk));
+      if (SERIAL_WRITE_DEBUG) {
+        console.log(`[serial:${port.path}] rx-chunk -> ${chunkHex}`);
+        console.log(
+          `[serial:${port.path}] rx-chunk [buffer] ->`,
+          Array.from(chunk)
+        );
+      }
       if (responseIdleTimer) clearTimeout(responseIdleTimer);
       responseIdleTimer = setTimeout(completeResponse, responseIdleMs);
     };
     const onError = (error) => {
       cleanup();
-      reject(error);
+      safeReject(error);
     };
     const cleanup = () => {
       clearTimeout(timeout);
@@ -328,20 +397,22 @@ async function writeToPort(port, data) {
     port.write(buffer, (writeError) => {
       if (writeError) {
         cleanup();
-        reject(writeError);
+        safeReject(writeError);
         return;
       }
 
       port.drain((drainError) => {
         if (drainError) {
           cleanup();
-          reject(drainError);
+          safeReject(drainError);
         }
       });
     });
   });
   const responseHex = responseChunk.toString("hex").toUpperCase();
-  console.log(`[serial:${port.path}] writeToPort awaited-RX -> ${responseHex}`);
+  if (SERIAL_WRITE_DEBUG) {
+    console.log(`[serial:${port.path}] writeToPort awaited-RX -> ${responseHex}`);
+  }
 
   return {
     success: true,
@@ -373,8 +444,22 @@ export async function writeNavigationLightsSerialData(data) {
     SERIAL_NAVIGATION_LIGHTS,
     SERIAL_NAVIGATION_LIGHTS_BAUD_RATE
   );
-  const result = await writeToPort(navigationLightsSerialPort, data);
+  console.log(
+    `[serial:${navigationLightsSerialPort.path}] writeNavigationLightsSerialData data ->`,
+    JSON.stringify(data)
+  );
+  // const payloadHex = normalizeSerialHexPayload(data);
+  const payloadHex = Buffer.from(JSON.stringify(data) + "\n").toString("hex");
+  console.log(
+    `[serial:${navigationLightsSerialPort.path}] writeNavigationLightsSerialData payloadHex ->`,
+    payloadHex
+  );
+  const result = await writeToPort(navigationLightsSerialPort, payloadHex);
   navigationLastWriteAt = new Date().toISOString();
+  // console.log(
+  //   `[serial:${navigationLightsSerialPort.path}] writeNavigationLightsSerialData result ->`,
+  //   JSON.stringify(result)
+  // );
   return result;
 }
 

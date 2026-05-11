@@ -63,8 +63,24 @@ export async function writeVendingSerialController(req, res, next) {
 
 export async function writeNavigationLightsSerialController(req, res, next) {
   try {
+    const navigationLightsPath = getSerialConfig().navigationLights.path;
+    console.log(
+      `[serial:${navigationLightsPath}] writeNavigationLightsSerialController req.body.data ->`,
+      JSON.stringify(req.body.data)
+    );
     const result = await writeNavigationLightsSerialData(req.body.data);
-    return res.json(result);
+
+    // console.log(
+    //   `[serial:${navigationLightsPath}] writeNavigationLightsSerialController result ->`,
+    //   JSON.stringify(result)
+    // );
+
+    return res.json({ success: true,
+      accepted: req.body.data,
+      // result: result ? empty : result
+
+
+    });
   } catch (error) {
     return next(error);
   }
