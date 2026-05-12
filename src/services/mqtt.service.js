@@ -13,6 +13,10 @@ import {
   CUSTOMER_CODE,
   VENDING_CODE,
 } from "../config/env.js";
+import { logAgent } from "../logger/logAgent.js";
+
+/** Max UTF-8 length of `payload` stored in `events-mqtt.log` (remainder noted in field). */
+const MQTT_LOG_PAYLOAD_MAX_CHARS = 65536;
 
 let mqttClient;
 let isMqttConnected = false;
@@ -20,6 +24,22 @@ let isMqttReconnecting = false;
 let lastConnectedAt;
 let lastDisconnectedAt;
 let lastError;
+
+function serializeMqttPublishBody(payload) {
+  try {
+    if (typeof payload === "string" || Buffer.isBuffer(payload)) return payload;
+    return JSON.stringify(payload);
+  } catch (err) {
+    return JSON.stringify({ error: "mqtt_payload_serialize_failed", message: err.message });
+  }
+}
+
+function mqttPayloadForLog(payload) {
+  const body = serializeMqttPublishBody(payload);
+  const s = Buffer.isBuffer(body) ? body.toString("utf8") : String(body);
+  if (s.length <= MQTT_LOG_PAYLOAD_MAX_CHARS) return s;
+  return `${s.slice(0, MQTT_LOG_PAYLOAD_MAX_CHARS)}…(truncated, ${s.length} chars total)`;
+}
 
 export function getMqttClient() {
   if (!MQTT_ENABLED) return null;
@@ -38,19 +58,33 @@ export function getMqttClient() {
     lastConnectedAt = new Date().toISOString();
     lastError = undefined;
     console.log(`[mqtt] connected -> ${MQTT_BROKER_URL}`);
+    logAgent.mqtt({
+      event: "mqtt.connect",
+      brokerUrl: MQTT_BROKER_URL,
+      clientId: MQTT_CLIENT_ID,
+      topic: MQTT_QRNFC_TOPIC,
+    });
   });
   mqttClient.on("reconnect", () => {
     isMqttReconnecting = true;
     console.log("[mqtt] reconnecting...");
+    logAgent.mqtt({ event: "mqtt.reconnect", brokerUrl: MQTT_BROKER_URL, clientId: MQTT_CLIENT_ID });
   });
   mqttClient.on("close", () => {
     isMqttConnected = false;
     lastDisconnectedAt = new Date().toISOString();
     console.log("[mqtt] connection closed");
+    logAgent.mqtt({ event: "mqtt.close", brokerUrl: MQTT_BROKER_URL, clientId: MQTT_CLIENT_ID });
   });
   mqttClient.on("error", (error) => {
     lastError = error.message;
     console.error(`[mqtt] error: ${error.message}`);
+    logAgent.mqtt({
+      event: "mqtt.error",
+      brokerUrl: MQTT_BROKER_URL,
+      clientId: MQTT_CLIENT_ID,
+      message: error.message,
+    });
   });
 
   return mqttClient;
@@ -59,6 +93,7 @@ export function getMqttClient() {
 export function initializeMqttPublisher() {
   if (!MQTT_ENABLED) {
     console.log("[mqtt] disabled (MQTT_ENABLED=false)");
+    logAgent.mqtt({ event: "mqtt.disabled" });
     return null;
   }
   console.log(
@@ -75,13 +110,19 @@ export async function publishMqttMessage(topic, payload, options = {}) {
   const client = getMqttClient();
   if (!client || !isMqttConnected) {
     console.log("[mqtt] skip publish: client not connected");
+    const body = serializeMqttPublishBody(payload);
+    const bodyStr = Buffer.isBuffer(body) ? body.toString("utf8") : String(body);
+    logAgent.mqtt({
+      event: "mqtt.publish.skipped",
+      topic,
+      reason: "not_connected",
+      bodyLength: bodyStr.length,
+      payload: mqttPayloadForLog(bodyStr),
+    });
     return false;
   }
 
-  const body =
-    typeof payload === "string" || Buffer.isBuffer(payload)
-      ? payload
-      : JSON.stringify(payload);
+  const body = serializeMqttPublishBody(payload);
 
   const publishOptions = {
     qos: MQTT_QRNFC_QOS,
@@ -99,6 +140,15 @@ export async function publishMqttMessage(topic, payload, options = {}) {
     });
   });
 
+  const bodyStr = typeof body === "string" ? body : body.toString("utf8");
+  logAgent.mqtt({
+    event: "mqtt.publish",
+    topic,
+    qos: publishOptions.qos,
+    retain: publishOptions.retain,
+    bodyLength: bodyStr.length,
+    payload: mqttPayloadForLog(bodyStr),
+  });
   return true;
 }
 
@@ -116,7 +166,7 @@ export function getMqttStatus() {
   };
 }
 
-export async function publishQrNfcPayload({ payloadText, payloadBytes, portPath }) {
+export async function publishQrNfcPayload({ payloadText, payloadBytes, portPath, mifare = {} }) {
   // แยกประเภทข้อมูล QR Code/NFC (โดยเฉพาะสำหรับ Mifare signature)
   let type = "unknown";
 
@@ -159,14 +209,15 @@ export async function publishQrNfcPayload({ payloadText, payloadBytes, portPath 
     action = "mifare"
   }
 
-console.log(`[mqtt] payloadText ->`, typeof(payloadText));
+  console.log(`[mqtt] payloadText ->`, typeof (payloadText));
   const message = JSON.stringify({
     act: action,
-    code: payloadText ,
+    code: type === "nfc-mifare" && mifare && mifare.uid ? Buffer.from(mifare.uid).toString("hex").toUpperCase() : payloadText,
     raw: payloadBytes,
     uid: "",
     ts: new Date().toISOString(),
     info: {
+      mifare,
       channel: "qr-nfc",
       portPath,
       payloadText,
@@ -177,8 +228,19 @@ console.log(`[mqtt] payloadText ->`, typeof(payloadText));
   });
   console.log(`[mqtt] publishQrNfcPayload message ->`, message);
 
-  return publishMqttMessage(`hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader`, message, {
+  const topic = `hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader`;
+  const publishOk = await publishMqttMessage(topic, message, {
     qos: MQTT_QRNFC_QOS,
     retain: MQTT_QRNFC_RETAIN,
   });
+  logAgent.mqtt({
+    event: "mqtt.qrnfc.scan",
+    topic,
+    portPath,
+    readerType: type,
+    action,
+    publishOk,
+    payload: mqttPayloadForLog(message),
+  });
+  return publishOk;
 }

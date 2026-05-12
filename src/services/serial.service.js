@@ -10,10 +10,12 @@ import {
   SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY,
   SERIAL_VENDING,
   SERIAL_VENDING_BAUD_RATE,
+  SERIAL_PORT_QUEUE_LOG,
   SERIAL_WRITE_DEBUG,
   SERIAL_WRITE_TIMEOUT_MS,
 } from "../config/env.js";
 import { publishQrNfcPayload } from "./mqtt.service.js";
+import { logAgent } from "../logger/logAgent.js";
 
 
 let vendingSerialPort;
@@ -35,6 +37,8 @@ let qrNfcFrameTimer;
 let navigationFrameBuffer = Buffer.alloc(0);
 let navigationFrameTimer;
 const portWriteQueue = new Map();
+/** Per `port.path`: FIFO labels waiting + current runner (for queue logging). */
+const portQueueMeta = new Map();
 const QR_NFC_FRAME_IDLE_MS = 80;
 const NAVIGATION_FRAME_IDLE_MS = 80;
 
@@ -63,16 +67,111 @@ async function getPort(currentPort, path, baudRate) {
   return currentPort;
 }
 
-async function withPortWriteQueue(port, task) {
+function getPortQueueMeta(key) {
+  if (!portQueueMeta.has(key)) {
+    portQueueMeta.set(key, { order: [], running: null });
+  }
+  return portQueueMeta.get(key);
+}
+
+/** Normalize TX hex for queue snapshot (uppercase, no spaces); empty → null. */
+function normalizeQueueTxHex(value) {
+  if (value === undefined || value === null) return null;
+  const s = String(value).replace(/\s+/g, "").toUpperCase();
+  return s.length ? s : null;
+}
+
+function queueHexForLog(hex) {
+  if (!hex) return "—";
+  if (hex.length <= 72) return hex;
+  return `${hex.slice(0, 72)}…(${hex.length} hex chars)`;
+}
+
+function formatQueueJobsForLog(jobs) {
+  if (!jobs.length) return "—";
+  return jobs.map((j) => `${j.label}<${queueHexForLog(j.txHex)}>`).join(" → ");
+}
+
+/**
+ * @param {string} portPath
+ * @param {{ phase: string; label?: string; txHex?: string | null; message: string; waitingCount?: number; behind?: string }} detail
+ */
+function logPortQueue(portPath, detail) {
+  if (SERIAL_PORT_QUEUE_LOG) {
+    console.log(`[serial-queue:${portPath}] ${detail.message}`);
+  }
+  logAgent.queue({
+    event: "serial.queue",
+    portPath,
+    phase: detail.phase,
+    label: detail.label,
+    txHex: detail.txHex ?? null,
+    waitingCount: detail.waitingCount,
+    behind: detail.behind,
+    message: detail.message,
+  });
+}
+
+/**
+ * Serialize writes per COM path.
+ * @param {import("serialport").SerialPort} port
+ * @param {string} label
+ * @param {string | null | undefined} txHex — bytes to send as even-length hex (for `/health` & `/job/que`); null if unknown
+ * @param {() => Promise<unknown>} task
+ */
+async function withPortWriteQueue(port, label, txHex, task) {
   const key = port?.path || "unknown-port";
+  const meta = getPortQueueMeta(key);
+  const job = { label, txHex: normalizeQueueTxHex(txHex) };
+  meta.order.push(job);
+  const tail = formatQueueJobsForLog(meta.order);
+  const active =
+    meta.running && typeof meta.running === "object"
+      ? `${meta.running.label}<${queueHexForLog(meta.running.txHex)}>`
+      : "—";
+  logPortQueue(key, {
+    phase: "enqueue",
+    label,
+    txHex: job.txHex,
+    waitingCount: meta.order.length,
+    message: `+ ENQUEUE "${label}" txHex=${queueHexForLog(job.txHex)} | คิวรอ: [${tail}] | กำลังรัน: ${active}`,
+  });
+
   const previous = portWriteQueue.get(key) || Promise.resolve();
 
   const current = previous
     .catch(() => {})
-    .then(task)
+    .then(async () => {
+      const next = meta.order.shift() || job;
+      meta.running = { label: next.label, txHex: next.txHex ?? null };
+      const behind = formatQueueJobsForLog(meta.order);
+      logPortQueue(key, {
+        phase: "run",
+        label: next.label,
+        txHex: next.txHex,
+        behind,
+        waitingCount: meta.order.length,
+        message: `▶ RUN "${next.label}" txHex=${queueHexForLog(next.txHex)} | ต่อคิว: [${behind}]`,
+      });
+      try {
+        return await task();
+      } finally {
+        meta.running = null;
+        logPortQueue(key, {
+          phase: "done",
+          label: next.label,
+          waitingCount: meta.order.length,
+          behind: formatQueueJobsForLog(meta.order),
+          message: `■ DONE "${next.label}" | เหลือในคิว: [${formatQueueJobsForLog(meta.order)}]`,
+        });
+      }
+    })
     .finally(() => {
       if (portWriteQueue.get(key) === current) {
         portWriteQueue.delete(key);
+        if (!meta.order.length && !meta.running) {
+          portQueueMeta.delete(key);
+        }
       }
     });
 
@@ -107,8 +206,8 @@ function flushQrNfcFrame(buffer) {
   const payload = buffer.toString("utf8").trim();
   if (!payload) return;
 
-  console.log(`[serial:qr-nfc] payload -> ${payload}`);
-  console.log(`[serial:qr-nfc] Buffer ->`, Array.from(buffer));
+  // console.log(`[serial:qr-nfc] payload -> ${payload}`);
+  // console.log(`[serial:qr-nfc] Buffer ->`, Array.from(buffer));
 
   
 
@@ -486,14 +585,17 @@ async function writeToPort(port, data) {
   };
 }
 
-export async function writeVendingSerialData(data) {
+export async function writeVendingSerialData(data, queueLabel = "vending-hex") {
   vendingSerialPort = await getPort(
     vendingSerialPort,
     SERIAL_VENDING,
     SERIAL_VENDING_BAUD_RATE
   );
-  const result = await withPortWriteQueue(vendingSerialPort, () =>
-    writeToPort(vendingSerialPort, data)
+  const result = await withPortWriteQueue(
+    vendingSerialPort,
+    queueLabel,
+    normalizeQueueTxHex(data),
+    () => writeToPort(vendingSerialPort, data)
   );
   vendingLastWriteAt = new Date().toISOString();
 
@@ -501,6 +603,14 @@ export async function writeVendingSerialData(data) {
     `[serial:${vendingSerialPort.path}] writeVendingSerialData result ->`,
     JSON.stringify(result)
   );
+  logAgent.serial({
+    event: "serial.vending.write.done",
+    portPath: vendingSerialPort.path,
+    queueLabel,
+    txHexPrefix: normalizeQueueTxHex(data)?.slice(0, 256) ?? null,
+    responseHexPrefix: result.responseHex?.slice(0, 256) ?? null,
+    txBytes: result.bytes,
+  });
   return result;
 }
 
@@ -525,8 +635,11 @@ export async function writeNavigationLightsSerialData(data) {
   const maxAttempt = Math.max(1, SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY + 1);
   for (let attempt = 1; attempt <= maxAttempt; attempt += 1) {
     try {
-      result = await withPortWriteQueue(navigationLightsSerialPort, () =>
-        writeToPort(navigationLightsSerialPort, payloadHex)
+      result = await withPortWriteQueue(
+        navigationLightsSerialPort,
+        `nav-lights-rx#${attempt}`,
+        payloadHex,
+        () => writeToPort(navigationLightsSerialPort, payloadHex)
       );
       break;
     } catch (error) {
@@ -550,6 +663,14 @@ export async function writeNavigationLightsSerialData(data) {
   if (!result && lastError) {
     throw lastError;
   }
+  logAgent.serial({
+    event: "serial.navigation.write.done",
+    portPath: navigationLightsSerialPort.path,
+    act: data && typeof data === "object" ? data.act ?? null : null,
+    payloadHexPrefix: payloadHex.slice(0, 256),
+    responseHexPrefix: result.responseHex?.slice(0, 256) ?? null,
+    txBytes: result.bytes,
+  });
   return result;
 }
 
@@ -562,7 +683,7 @@ export async function writeNavigationLightsSerialDataNoWait(data) {
   const payloadHex = Buffer.from(JSON.stringify(data) + "\n").toString("hex");
   const txBuffer = Buffer.from(payloadHex, "hex");
 
-  await withPortWriteQueue(navigationLightsSerialPort, () => new Promise((resolve, reject) => {
+  await withPortWriteQueue(navigationLightsSerialPort, "nav-lights-no-wait", payloadHex, () => new Promise((resolve, reject) => {
     navigationLightsSerialPort.write(txBuffer, (writeError) => {
       if (writeError) {
         reject(writeError);
@@ -579,6 +700,13 @@ export async function writeNavigationLightsSerialDataNoWait(data) {
   }));
 
   navigationLastWriteAt = new Date().toISOString();
+  logAgent.serial({
+    event: "serial.navigation.write.no_wait",
+    portPath: navigationLightsSerialPort.path,
+    act: data && typeof data === "object" ? data.act ?? null : null,
+    payloadHexPrefix: payloadHex.slice(0, 256),
+    txBytes: txBuffer.length,
+  });
   return {
     success: true,
     bytes: txBuffer.length,
@@ -631,6 +759,80 @@ function buildPortHealth({
     lastConnectedAt: lastConnectedAt || null,
     lastWriteAt: lastWriteAt || null,
     lastError: lastError || null,
+  };
+}
+
+/**
+ * Snapshot of per-COM serial **write** queues (same labels as `SERIAL_PORT_QUEUE_LOG` console).
+ * @param {Record<string, { actualPath?: string | null, configuredPath?: string }>} [ports] — e.g. `getSerialHealthSnapshot().ports`
+ */
+export function getSerialWriteQueueSnapshot(ports = {}) {
+  const pickPath = (p) => p?.actualPath || p?.configuredPath || null;
+
+  function peek(path) {
+    const key = path || "unknown-port";
+    const meta = portQueueMeta.get(key);
+    if (!meta) {
+      return {
+        queueKey: key,
+        runningLabel: null,
+        runningTxHex: null,
+        runningJob: null,
+        waitingLabels: [],
+        waitingJobs: [],
+        waitingTxHex: [],
+        waitingCount: 0,
+        busy: false,
+      };
+    }
+    const waitingJobs = meta.order.map((j) => ({
+      label: j.label,
+      txHex: j.txHex ?? null,
+    }));
+    const waitingLabels = waitingJobs.map((j) => j.label);
+    const waitingTxHex = waitingJobs.map((j) => j.txHex);
+    const runningJob =
+      meta.running && typeof meta.running === "object"
+        ? {
+            label: meta.running.label,
+            txHex: meta.running.txHex ?? null,
+          }
+        : null;
+    return {
+      queueKey: key,
+      runningLabel: runningJob?.label ?? null,
+      runningTxHex: runningJob?.txHex ?? null,
+      runningJob,
+      waitingLabels,
+      waitingJobs,
+      waitingTxHex,
+      waitingCount: meta.order.length,
+      busy: Boolean(runningJob || meta.order.length),
+    };
+  }
+
+  const vPath = pickPath(ports.vending);
+  const nPath = pickPath(ports.navigationLights);
+  const qPath = pickPath(ports.qrNfc);
+
+  return {
+    channels: {
+      vending: peek(vPath),
+      navigationLights: peek(nPath),
+      qrNfc: {
+        queueKey: qPath,
+        runningLabel: null,
+        runningTxHex: null,
+        runningJob: null,
+        waitingLabels: [],
+        waitingJobs: [],
+        waitingTxHex: [],
+        waitingCount: 0,
+        busy: false,
+        note: "No HTTP write queue on qr-nfc in this service.",
+      },
+    },
+    activeQueueKeys: [...portQueueMeta.keys()],
   };
 }
 

@@ -1,69 +1,30 @@
-# version: "3.8"
+# Local build: builds the image from this repo and runs the API.
+#
+#   docker compose up -d --build
+#   docker compose logs -f
+#
+# Requires `.env` in the project root (copy from `.env.example`). Host `PORT` must match
+# the container port mapping (default 3303).
+#
+# Logs + rotated files: bind-mount `./logs` → `/app/logs` (same as `docker run -v ./logs:/app/logs`).
 
 services:
-  vending-agent:
-    image: registry.rd.ns.co.th/vending-agent:0.0.1
-    pull_policy: always
-    container_name: vending-agent
+  vending-3d-ctl:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${VENDING_CTL_IMAGE_LOCAL:-vending-3d-ctl:local}
+    container_name: vending-3d-ctl
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
-      - "3304:3304"
-    environment:
-      PORT: 3304
-
-      CUSTOMER_CODE: "wnyh"
-
-      # vending code
-      VENDING_CODE: "FFFFFF12"
-      DOOR_TYPE_STANDBY: "[1,2,3]"
-      DOOR_TYPE_NOW: "[1,2,3]"
-
-      # Mogan
-      APP_TIMEZONE: "Asia/Bangkok"
-      API_LOG_RETENTION_DAYS: 30
-
-      # Vending
-      # ----------------------------
-      # สำหรับเครื่อง Windows ให้ใส่ COM Port เป็นชื่อเช่น "COM6"
-      # หากรันบน Windows ให้คอนฟิกเป็นค่าแบบนี้:
-      SERIAL_VENDING: "COM6" # หรือ “COM3”, “COM4” etc., ตามค่าใน Device Manager
-
-      SERIAL_VENDING_BAUD_RATE: 9600
-
-      # Navigation Lights
-      # สำหรับ Windows ใส่ COM Port เช่นเดียวกัน
-      SERIAL_NAVIGATION_LIGHTS: "COM144"
-      SERIAL_NAVIGATION_LIGHTS_BAUD_RATE: 115200
-
-      # QR NFC
-      SERIAL_QR_NFC: "COM3"
-      SERIAL_QR_NFC_BAUD_RATE: 115200
-      SERIAL_WRITE_TIMEOUT_MS: 3000
-
-      # MQTT (publish qr-nfc serial data)
-      MQTT_ENABLED: "true"
-      MQTT_BROKER_URL: "mqtt://rd.ns.co.th:1883"
-      MQTT_CLIENT_ID: "vending-3d-ctl"
-      MQTT_USERNAME: ""
-      MQTT_PASSWORD: ""
-      MQTT_QRNFC_TOPIC: "hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader"
-      MQTT_QRNFC_MIFARE_SIGNATURE: "02,FF,01,09,00"
-      MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX: "([0-9a-f\\-]{36})_(\\d{8})_(\\d+)_(\\d+)_(IN|OUT)_(\\d{14})"
-      MQTT_QRNFC_QOS: 0
-      MQTT_QRNFC_RETAIN: "false"
-
+      - "${PORT:-3303}:${PORT:-3303}"
     volumes:
       - ./logs:/app/logs
-
-    # 
-    # หากใช้ Windows: ไม่ต้อง map devices หรือ privileged ใดๆ
-    # แค่ระบุ SERIAL_VENDING, SERIAL_NAVIGATION_LIGHTS, SERIAL_QR_NFC เป็นชื่อ COM port (เช่น "COM3", "COM6") ตามที่เห็นใน Device Manager ใน Windows
-    #
-    # สำหรับ Linux (เท่านั้น):
-    #   ถ้าต้องการเข้าถึง serial port เช่น /dev/ttyUSB* ให้เพิ่ม privileged: true ด้วย
-    #   และแมป devices ลงไป (uncomment ตามต้องการ)
+    # Linux hosts: map serial devices and optionally raise privileges (uncomment as needed).
     # privileged: true
     # devices:
-    #   - "/dev/ttyUSB0:/dev/ttyUSB0"
-    #   - "/dev/ttyUSB1:/dev/ttyUSB1"
-    #   - "/dev/ttyUSB2:/dev/ttyUSB2"
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+    #   - /dev/ttyUSB1:/dev/ttyUSB1
+    #   - /dev/ttyUSB2:/dev/ttyUSB2

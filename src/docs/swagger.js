@@ -1,4 +1,5 @@
 import swaggerUi from "swagger-ui-express";
+import { API_BEARER_TOKEN } from "../config/env.js";
 
 /** Multi-line OpenAPI `description` (Swagger UI แสดงขึ้นบรรทัดใหม่อ่านง่าย). */
 function d(...lines) {
@@ -11,7 +12,7 @@ const swaggerSpec = {
     title: "Vending 3D Control API",
     version: "1.0.0",
     description: d(
-      "Vending 3D control API — serial, navigation lights, SY600 commands, dispenser, health.",
+      "Vending 3D control API — serial, navigation lights, SY600 commands, dispenser, health, log listing/tail.",
       "",
       "**Serial**",
       "- `POST /serial/vending/write` — hex string → vending port, wait RX.",
@@ -22,8 +23,20 @@ const swaggerSpec = {
       "- High-level routes under `/sy600/*` build binary frames, send on vending serial, return decoded fields.",
       "- Lift **target** `0` reset, `1..7` floors, **`85`/`86`/`87`** (0x55–0x57) = delivery / output positions (confirm door mapping with vendor).",
       "",
+      "**Logs (optional)**",
+      "- `GET /logs` and `GET /logs/{category}` when `APP_LOG_VIEW_API_ENABLED=true` (see README).",
+      "",
+      "**Authentication**",
+      "- When **`API_BEARER_TOKEN`** is set in server env, every **`/api/v1/*`** call must send **`Authorization: Bearer <API_BEARER_TOKEN>`**.",
+      "- Use **Authorize** in Swagger UI (persisted) when the token is configured.",
+      "",
+      "**Docker / operations**",
+      "- Mount a host directory to **`/app/logs`** so `access.log` and `events-*.log` survive container restarts.",
+      "- **Build in Compose:** `docker compose up -d --build` using `docker-compose.yml`.",
+      "- **Registry image:** `docker compose -f docker-compose.image.yml up -d` (set `VENDING_CTL_IMAGE` if needed).",
+      "",
       "**Docs**",
-      "- This spec is served at `/docs` (see app)."
+      "- This spec is served at `/docs` (same origin as the API; default base URL below is `localhost:3303`)."
     ),
   },
   servers: [
@@ -42,7 +55,7 @@ const swaggerSpec = {
           "",
           "**กล่องหลัก**",
           "- `summary` — สรุปเร็ว: systemStatus, จำนวน alerts, serial/MQTT/SY600 แบบย่อ",
-          "- `devices` — รายละเอียด serial แต่ละช่อง, MQTT, การตั้งค่า SY600",
+          "- `devices` — รายละเอียด serial แต่ละช่อง, **คิวเขียน serial** (`devices.serial.writeQueues`), MQTT, SY600",
           "- `diagnostics` — process (รวม memory), serial policy (timeout, nav retry), เวลา/timezone",
           "- `alerts` — รายการเตือน (serial หลุด, MQTT เปิดแต่ไม่ต่อ ฯลฯ)",
           "",
@@ -58,6 +71,150 @@ const swaggerSpec = {
                 schema: {
                   $ref: "#/components/schemas/HealthResponse",
                 },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/job/que": {
+      get: {
+        tags: ["System"],
+        summary: "Serial write queue snapshot",
+        description: d(
+          "ข้อมูลคิวเขียน serial แบบเดียวกับ `devices.serial.writeQueues` ใน `GET /health`.",
+          "",
+          "- `writeQueues` — ต่อช่อง vending / navigation / qr (qr ไม่มีคิวเขียน)",
+          "- `activeQueueKeys` — key ภายในสำหรับ debug",
+          "- `portQueueConsoleLog` — ค่า env `SERIAL_PORT_QUEUE_LOG`"
+        ),
+        responses: {
+          200: {
+            description: "Queue snapshot",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/JobQueueResponse",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/logs": {
+      get: {
+        tags: ["Logs"],
+        summary: "List log categories and files",
+        description: d(
+          "ต้องเปิด `APP_LOG_VIEW_API_ENABLED=true` มิฉะนั้นได้ **404**",
+          "",
+          "เมื่อตั้ง `API_BEARER_TOKEN` ต้องส่ง `Authorization: Bearer` ตามเดียวกับ endpoint อื่นภายใต้ `/api/v1`",
+          "",
+          "คืนรายการหมวด (`http`, `serial`, …, `access`) และไฟล์ในโฟลเดอร์ `logs/` พร้อมขนาด / mtime"
+        ),
+        responses: {
+          200: {
+            description: "Categories and log file metadata",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/LogsListResponse" },
+              },
+            },
+          },
+          401: {
+            description: "Missing or invalid Bearer when `API_BEARER_TOKEN` is set",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          404: {
+            description: "Log view API disabled",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/logs/{category}": {
+      get: {
+        tags: ["Logs"],
+        summary: "Tail lines from a log file",
+        description: d(
+          "อ่านท้ายไฟล์เป็นบรรทัด (สำหรับไฟล์ `.log` ใหญ่จะอ่านเฉพาะช่วงท้ายตาม `APP_LOG_VIEW_TAIL_BYTES`)",
+          "",
+          "ไฟล์ `.gz` จะถูก decompress ทั้งก้อนในหน่วยความจำ — จำกัดขนาดด้วย `APP_LOG_VIEW_GZIP_MAX_BYTES`",
+          "",
+          "Query:",
+          "- `lines` — จำนวนบรรทัดสูงสุด (ค่าเริ่มต้น ~200, สูงสุดตาม `APP_LOG_VIEW_MAX_LINES`)",
+          "- `file` — เลือกไฟล์เฉพาะ (basename เช่น `events-serial-20260511-p0.log`); ถ้าไม่ส่งใช้ไฟล์ active (`events-<category>.log` หรือ `access.log`)"
+        ),
+        parameters: [
+          {
+            name: "category",
+            in: "path",
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["http", "serial", "queue", "sy600", "mqtt", "app", "error", "access"],
+            },
+          },
+          {
+            name: "lines",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 5000, default: 200 },
+          },
+          {
+            name: "file",
+            in: "query",
+            required: false,
+            schema: { type: "string", example: "events-http.log" },
+          },
+        ],
+        responses: {
+          200: {
+            description: "Tail lines as JSON strings (JSONL lines)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/LogTailResponse" },
+              },
+            },
+          },
+          400: {
+            description: "Invalid file name",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          401: {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          404: {
+            description: "API disabled, unknown category, or file missing",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          413: {
+            description: "Gzip log exceeds configured max size",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
               },
             },
           },
@@ -633,7 +790,60 @@ const swaggerSpec = {
     },
   },
   components: {
+    securitySchemes: {
+      ApiBearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "opaque",
+        description:
+          "ค่าเดียวกับ `API_BEARER_TOKEN` ใน env ของเซิร์ฟเวอร์ — ใส่ใน Swagger ผ่านปุ่ม Authorize เมื่อ env มีการตั้ง token",
+      },
+    },
     schemas: {
+      LogFileEntry: {
+        type: "object",
+        properties: {
+          name: { type: "string", example: "events-http.log" },
+          size: { type: "number", example: 1024 },
+          mtimeMs: { type: "number", example: 1715412345678 },
+          compressed: { type: "boolean", example: false },
+        },
+        required: ["name", "size", "mtimeMs", "compressed"],
+      },
+      LogsCategoryEntry: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "http" },
+          activeFile: { type: "string", example: "events-http.log" },
+          activeSizeBytes: { type: "number", nullable: true },
+          activeMtimeMs: { type: "number", nullable: true },
+          files: { type: "array", items: { $ref: "#/components/schemas/LogFileEntry" } },
+        },
+        required: ["id", "activeFile", "files"],
+      },
+      LogsListResponse: {
+        type: "object",
+        properties: {
+          dir: { type: "string", example: "logs" },
+          categories: { type: "array", items: { $ref: "#/components/schemas/LogsCategoryEntry" } },
+        },
+        required: ["dir", "categories"],
+      },
+      LogTailResponse: {
+        type: "object",
+        properties: {
+          category: { type: "string" },
+          file: { type: "string" },
+          linesRequested: { type: "integer" },
+          lineCount: { type: "integer" },
+          totalFileBytes: { type: "number" },
+          truncatedFromStartBytes: { type: "number", nullable: true },
+          partialFirstLine: { type: "boolean" },
+          uncompressedApproxBytes: { type: "number", description: "Present for .gz reads" },
+          lines: { type: "array", items: { type: "string" }, description: "Raw text lines (JSONL as strings)" },
+        },
+        required: ["category", "file", "linesRequested", "lineCount", "totalFileBytes", "lines"],
+      },
       HealthAlert: {
         type: "object",
         properties: {
@@ -672,6 +882,92 @@ const swaggerSpec = {
           },
         },
         required: ["systemStatus", "alertsCount", "serial", "mqtt", "sy600"],
+      },
+      SerialWriteQueueJob: {
+        type: "object",
+        description: "One queued serial write: human label + TX hex (bytes to send on wire)",
+        properties: {
+          label: { type: "string", example: "sy600-0xC3" },
+          txHex: {
+            type: "string",
+            nullable: true,
+            example: "EE01AABBCCDDC3000201000000",
+            description: "Even-length uppercase hex (same as vending `data` or built SY600 frame / nav JSON line as hex)",
+          },
+        },
+        required: ["label"],
+      },
+      SerialWriteQueueChannelSnapshot: {
+        type: "object",
+        description:
+          "Per-channel serial write queue (FIFO). `waitingJobs` / `runningJob` pair each job with **txHex**; " +
+          "`waitingLabels` mirrors labels only for backward compatibility.",
+        properties: {
+          queueKey: {
+            type: "string",
+            nullable: true,
+            description: "COM / device path used as internal queue key (usually actualPath or configuredPath)",
+          },
+          runningLabel: {
+            type: "string",
+            nullable: true,
+            example: "sy600-0xC3",
+            description: "Shorthand: `runningJob.label`",
+          },
+          runningTxHex: {
+            type: "string",
+            nullable: true,
+            description: "Shorthand: `runningJob.txHex`",
+          },
+          runningJob: {
+            type: "object",
+            nullable: true,
+            description: "Job currently executing on this COM (null if idle); same shape as SerialWriteQueueJob",
+            properties: {
+              label: { type: "string", example: "sy600-0xC3" },
+              txHex: { type: "string", nullable: true, example: "EE01AABBCCDDC3000201000000" },
+            },
+          },
+          waitingLabels: {
+            type: "array",
+            items: { type: "string" },
+            example: ["sy600-0xC3", "sy600-0xC3"],
+            description: "Labels only, head → tail (same order as `waitingJobs`)",
+          },
+          waitingJobs: {
+            type: "array",
+            items: { $ref: "#/components/schemas/SerialWriteQueueJob" },
+            description: "Waiting jobs with **txHex** each (head → tail)",
+          },
+          waitingTxHex: {
+            type: "array",
+            items: { type: "string", nullable: true },
+            description: "Parallel array of hex for `waitingLabels` (same index order)",
+          },
+          waitingCount: { type: "number", example: 2 },
+          busy: { type: "boolean", example: true },
+          note: { type: "string", description: "Only on qr-nfc: explains no write queue" },
+        },
+      },
+      SerialWriteQueuesSnapshot: {
+        type: "object",
+        description:
+          "Per-COM serial write queue snapshot: running + waiting jobs, each with **txHex** (same data as console queue logs).",
+        properties: {
+          channels: {
+            type: "object",
+            properties: {
+              vending: { $ref: "#/components/schemas/SerialWriteQueueChannelSnapshot" },
+              navigationLights: { $ref: "#/components/schemas/SerialWriteQueueChannelSnapshot" },
+              qrNfc: { $ref: "#/components/schemas/SerialWriteQueueChannelSnapshot" },
+            },
+          },
+          activeQueueKeys: {
+            type: "array",
+            items: { type: "string" },
+            description: "Internal Map keys that currently hold queue state (debug path mismatches)",
+          },
+        },
       },
       SerialChannelHealth: {
         type: "object",
@@ -723,6 +1019,7 @@ const swaggerSpec = {
                   qrNfc: { $ref: "#/components/schemas/SerialChannelHealth" },
                 },
               },
+              writeQueues: { $ref: "#/components/schemas/SerialWriteQueuesSnapshot" },
             },
           },
           mqtt: {
@@ -778,6 +1075,10 @@ const swaggerSpec = {
                   retryDelayMs: { type: "number", description: "SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS" },
                 },
               },
+              portQueueConsoleLog: {
+                type: "boolean",
+                description: "SERIAL_PORT_QUEUE_LOG — mirror queue events to console",
+              },
             },
           },
           appTime: {
@@ -788,6 +1089,18 @@ const swaggerSpec = {
             },
           },
         },
+      },
+      JobQueueResponse: {
+        type: "object",
+        properties: {
+          timestamp: { type: "string", format: "date-time" },
+          writeQueues: { $ref: "#/components/schemas/SerialWriteQueuesSnapshot" },
+          portQueueConsoleLog: {
+            type: "boolean",
+            description: "SERIAL_PORT_QUEUE_LOG — queue events mirrored to console when true",
+          },
+        },
+        required: ["timestamp", "writeQueues", "portQueueConsoleLog"],
       },
       HealthResponse: {
         type: "object",
@@ -1119,6 +1432,16 @@ const swaggerSpec = {
   },
 };
 
+if (API_BEARER_TOKEN) {
+  swaggerSpec.security = [{ ApiBearerAuth: [] }];
+}
+
 export function setupSwagger(app) {
-  app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+  app.use(
+    "/docs",
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerSpec, {
+      persistAuthorization: true,
+    })
+  );
 }

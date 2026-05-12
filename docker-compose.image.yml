@@ -1,0 +1,26 @@
+# Pre-built image from a registry (no local `docker build`).
+#
+#   docker compose -f docker-compose.image.yml up -d
+#   docker compose -f docker-compose.image.yml pull
+#   docker compose -f docker-compose.image.yml logs -f
+#
+# Set image tag via env (defaults below) or edit `image:`.
+# Copy `.env.example` → `.env` and align `PORT` with `ports:` (default 3303).
+
+services:
+  vending-3d-ctl:
+    image: ${VENDING_CTL_IMAGE:-registry.rd.ns.co.th/vending-agent:0.0.3}
+    pull_policy: always
+    container_name: vending-3d-ctl
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-3303}:${PORT:-3303}"
+    volumes:
+      - ./logs:/app/logs
+    # privileged: true
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+    #   - /dev/ttyUSB1:/dev/ttyUSB1
+    #   - /dev/ttyUSB2:/dev/ttyUSB2

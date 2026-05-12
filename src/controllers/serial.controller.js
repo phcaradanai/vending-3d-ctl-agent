@@ -1,6 +1,7 @@
 import {
   getSerialConfig,
   getSerialHealthSnapshot,
+  getSerialWriteQueueSnapshot,
   writeNavigationLightsSerialData,
   writeNavigationLightsSerialDataNoWait,
   writeVendingSerialData,
@@ -10,6 +11,7 @@ import {
   SERIAL_API_TIMEOUT_MS,
   SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS,
   SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY,
+  SERIAL_PORT_QUEUE_LOG,
   SERIAL_WRITE_TIMEOUT_MS,
   SY600_DEVICE_ADDRESS_HEX,
   SY600_USE_CRC16,
@@ -86,6 +88,7 @@ export async function healthController(_req, res) {
             ...serialPorts.qrNfc,
           },
         },
+        writeQueues: getSerialWriteQueueSnapshot(serialPorts),
       },
       mqtt: {
         ...mqtt,
@@ -121,6 +124,7 @@ export async function healthController(_req, res) {
           maxRetry: SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY,
           retryDelayMs: SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS,
         },
+        portQueueConsoleLog: SERIAL_PORT_QUEUE_LOG,
       },
       appTime: {
         now,

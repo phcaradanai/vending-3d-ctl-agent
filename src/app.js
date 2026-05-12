@@ -10,10 +10,14 @@ import healthRouter from "./routes/health.routes.js";
 import serialRouter from "./routes/serial.routes.js";
 import drugDispenserRouter from "./routes/drugDispenser.routes.js";
 import sy600Router from "./routes/sy600.routes.js";
+import jobRouter from "./routes/job.routes.js";
+import logsRouter from "./routes/logs.routes.js";
 
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
 import { setupSwagger } from "./docs/swagger.js";
 import { API_LOG_RETENTION_DAYS, APP_TIMEZONE } from "./config/env.js";
+import { logAgentHttpMiddleware } from "./middleware/logAgentHttp.middleware.js";
+import { requireApiBearerToken } from "./middleware/apiBearerAuth.middleware.js";
 
 const app = express();
 const API_BASE_PATH = "/api/v1";
@@ -71,16 +75,20 @@ const combinedWithAppTimezone =
 
 app.use(cors());
 app.use(express.json());
+app.use(logAgentHttpMiddleware);
 // Write access logs to logs/access.log with daily rotation.
 app.use(morgan(combinedWithAppTimezone, { stream: accessLogStream }));
 // Also print request logs to stdout for local debugging.
 app.use(morgan(combinedWithAppTimezone));
 setupSwagger(app);
 
+app.use(API_BASE_PATH, requireApiBearerToken);
 app.use(API_BASE_PATH, healthRouter);
 app.use(API_BASE_PATH, serialRouter);
 app.use(API_BASE_PATH, drugDispenserRouter);
 app.use(API_BASE_PATH, sy600Router);
+app.use(API_BASE_PATH, jobRouter);
+app.use(API_BASE_PATH, logsRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

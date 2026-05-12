@@ -3,6 +3,7 @@ import {
   SY600_USE_CRC16,
 } from "../config/env.js";
 import { writeVendingSerialData } from "./serial.service.js";
+import { logAgent } from "../logger/logAgent.js";
 
 const SY600_START_TX = 0xee;
 const SY600_START_RX = 0xff;
@@ -254,14 +255,38 @@ function decodeCommandResponse(frame) {
   }
 }
 
-async function sendSy600(command, dataBytes) {
+function sy600DecodedSummary(decoded) {
+  if (!decoded || typeof decoded !== "object") return null;
+  return (
+    decoded.statusText ??
+    decoded.resultText ??
+    decoded.sensorStatusText ??
+    decoded.errorText ??
+    decoded.message ??
+    null
+  );
+}
+
+async function sendSy600(command, dataBytes, labelSuffix = "") {
   const frame = buildSy600Frame(command, dataBytes);
   const txHex = frame.toString("hex").toUpperCase();
-  const writeResult = await writeVendingSerialData(txHex);
+  const queueLabel = labelSuffix
+    ? `sy600-0x${toHex(command)}${labelSuffix}`
+    : `sy600-0x${toHex(command)}`;
+  const writeResult = await writeVendingSerialData(txHex, queueLabel);
   const parsed = parseSy600FrameFromHex(writeResult.responseHex);
+  const response = decodeCommandResponse(parsed);
+  logAgent.sy600({
+    event: "sy600.tx.complete",
+    command: `0x${toHex(command)}`,
+    queueLabel,
+    txHexPrefix: txHex.slice(0, 256),
+    responseHexPrefix: response.rawHex?.slice(0, 256) ?? null,
+    decodedSummary: sy600DecodedSummary(response.decoded),
+  });
   return {
     txHex,
-    response: decodeCommandResponse(parsed),
+    response,
   };
 }
 
@@ -335,7 +360,7 @@ export async function sy600MicroStepDispense({ layer, channelStart, channelEnd, 
   const attempts = [];
   for (let index = 0; index < repeatCount; index += 1) {
     // Run sequentially to avoid overlapping serial writes.
-    const result = await sendSy600(0xc4, dataBytes);
+    const result = await sendSy600(0xc4, dataBytes, `#${index + 1}/${repeatCount}`);
     attempts.push({
       attempt: index + 1,
       ...result,
@@ -391,11 +416,20 @@ export async function sy600ChannelDispense({ layerAddressHex, channelStart, chan
     frame[frame.length - 1] = (crc >> 8) & 0xff;
   }
   const txHex = frame.toString("hex").toUpperCase();
-  const writeResult = await writeVendingSerialData(txHex);
+  const writeResult = await writeVendingSerialData(txHex, "sy600-0x28");
   const parsed = parseSy600FrameFromHex(writeResult.responseHex);
+  const response = decodeCommandResponse(parsed);
+  logAgent.sy600({
+    event: "sy600.tx.complete",
+    command: "0x28",
+    queueLabel: "sy600-0x28",
+    txHexPrefix: txHex.slice(0, 256),
+    responseHexPrefix: response.rawHex?.slice(0, 256) ?? null,
+    decodedSummary: sy600DecodedSummary(response.decoded),
+  });
   return {
     txHex,
-    response: decodeCommandResponse(parsed),
+    response,
   };
 }
 
@@ -414,11 +448,20 @@ export async function sy600AckE0({ addressHex }) {
     frame[frame.length - 1] = (crc >> 8) & 0xff;
   }
   const txHex = frame.toString("hex").toUpperCase();
-  const writeResult = await writeVendingSerialData(txHex);
+  const writeResult = await writeVendingSerialData(txHex, "sy600-0xE0");
   const parsed = parseSy600FrameFromHex(writeResult.responseHex);
+  const response = decodeCommandResponse(parsed);
+  logAgent.sy600({
+    event: "sy600.tx.complete",
+    command: "0xE0",
+    queueLabel: "sy600-0xE0",
+    txHexPrefix: txHex.slice(0, 256),
+    responseHexPrefix: response.rawHex?.slice(0, 256) ?? null,
+    decodedSummary: sy600DecodedSummary(response.decoded),
+  });
   return {
     txHex,
-    response: decodeCommandResponse(parsed),
+    response,
   };
 }
 
