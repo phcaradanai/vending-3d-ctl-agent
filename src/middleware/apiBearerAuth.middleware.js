@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { API_BEARER_TOKEN } from "../config/env.js";
+import { API_BEARER_REQUIRED, API_BEARER_TOKEN } from "../config/env.js";
 
 function bearerTokensEqual(expected, sent) {
   const a = Buffer.from(String(expected), "utf8");
@@ -9,12 +9,18 @@ function bearerTokensEqual(expected, sent) {
 }
 
 /**
- * When `API_BEARER_TOKEN` is non-empty, every `/api/v1/*` request must send
+ * When `API_BEARER_TOKEN` is non-empty, protected `/api/v1/*` requests must send
  * `Authorization: Bearer <API_BEARER_TOKEN>`.
- * OPTIONS (CORS preflight) is skipped.
+ * Mount this after public routes (e.g. `GET /health`). OPTIONS (CORS preflight) is skipped.
  */
 export function requireApiBearerToken(req, res, next) {
   if (!API_BEARER_TOKEN) {
+    if (API_BEARER_REQUIRED) {
+      return res.status(503).json({
+        error: "ServiceUnavailable",
+        details: "Bearer auth is required but API_BEARER_TOKEN is not configured",
+      });
+    }
     return next();
   }
   if (req.method === "OPTIONS") {

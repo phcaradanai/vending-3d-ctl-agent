@@ -27,8 +27,10 @@ const swaggerSpec = {
       "- `GET /logs` and `GET /logs/{category}` when `APP_LOG_VIEW_API_ENABLED=true` (see README).",
       "",
       "**Authentication**",
-      "- When **`API_BEARER_TOKEN`** is set in server env, every **`/api/v1/*`** call must send **`Authorization: Bearer <API_BEARER_TOKEN>`**.",
-      "- Use **Authorize** in Swagger UI (persisted) when the token is configured.",
+      "- **`API_BEARER_TOKEN`** — when set, protected routes under **`/api/v1/*`** require **`Authorization: Bearer <token>`** (timing-safe compare).",
+      "- **`GET /health`** is **public** (no Bearer) so load balancers / Docker healthchecks still work.",
+      "- **`API_BEARER_REQUIRED=true`** — refuse to start unless **`API_BEARER_TOKEN`** is set (recommended for production).",
+      "- Use **Authorize** in Swagger UI (persisted) when a token is configured.",
       "",
       "**Docker / operations**",
       "- Mount a host directory to **`/app/logs`** so `access.log` and `events-*.log` survive container restarts.",
@@ -48,6 +50,7 @@ const swaggerSpec = {
   paths: {
     "/health": {
       get: {
+        security: [],
         tags: ["System"],
         summary: "Health check",
         description: d(
@@ -83,6 +86,8 @@ const swaggerSpec = {
         summary: "Serial write queue snapshot",
         description: d(
           "ข้อมูลคิวเขียน serial แบบเดียวกับ `devices.serial.writeQueues` ใน `GET /health`.",
+          "",
+          "เมื่อตั้ง `API_BEARER_TOKEN` ต้องส่ง `Authorization: Bearer` เหมือน endpoint สั่งงานอื่น",
           "",
           "- `writeQueues` — ต่อช่อง vending / navigation / qr (qr ไม่มีคิวเขียน)",
           "- `activeQueueKeys` — key ภายในสำหรับ debug",
@@ -796,7 +801,8 @@ const swaggerSpec = {
         scheme: "bearer",
         bearerFormat: "opaque",
         description:
-          "ค่าเดียวกับ `API_BEARER_TOKEN` ใน env ของเซิร์ฟเวอร์ — ใส่ใน Swagger ผ่านปุ่ม Authorize เมื่อ env มีการตั้ง token",
+          "ค่าเดียวกับ `API_BEARER_TOKEN` ใน env — ใส่ใน Swagger ผ่านปุ่ม Authorize เมื่อเซิร์ฟเวอร์ตั้ง token แล้ว " +
+          "(ตั้ง `API_BEARER_REQUIRED=true` ใน production เพื่อบังคับมี token ก่อนรัน)",
       },
     },
     schemas: {

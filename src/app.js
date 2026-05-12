@@ -10,8 +10,8 @@ import healthRouter from "./routes/health.routes.js";
 import serialRouter from "./routes/serial.routes.js";
 import drugDispenserRouter from "./routes/drugDispenser.routes.js";
 import sy600Router from "./routes/sy600.routes.js";
-import jobRouter from "./routes/job.routes.js";
 import logsRouter from "./routes/logs.routes.js";
+import jobRouter from "./routes/job.routes.js";
 
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
 import { setupSwagger } from "./docs/swagger.js";
@@ -82,12 +82,15 @@ app.use(morgan(combinedWithAppTimezone, { stream: accessLogStream }));
 app.use(morgan(combinedWithAppTimezone));
 setupSwagger(app);
 
-app.use(API_BASE_PATH, requireApiBearerToken);
+// Liveness/readiness without Bearer (serial + command routes stay behind `requireApiBearerToken`).
 app.use(API_BASE_PATH, healthRouter);
+app.use(API_BASE_PATH, jobRouter);
+
+
+app.use(API_BASE_PATH, requireApiBearerToken); // Protected routes
 app.use(API_BASE_PATH, serialRouter);
 app.use(API_BASE_PATH, drugDispenserRouter);
 app.use(API_BASE_PATH, sy600Router);
-app.use(API_BASE_PATH, jobRouter);
 app.use(API_BASE_PATH, logsRouter);
 
 app.use(notFoundHandler);
