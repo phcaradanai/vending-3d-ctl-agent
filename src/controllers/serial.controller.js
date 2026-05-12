@@ -16,8 +16,10 @@ import {
   SY600_DEVICE_ADDRESS_HEX,
   SY600_USE_CRC16,
 } from "../config/env.js";
+import { getSoftwareIdentification } from "../config/softwareIdentification.js";
 
 export async function healthController(_req, res) {
+  const softwareIdentification = getSoftwareIdentification();
   const serialConfig = getSerialConfig();
   const serialHealth = getSerialHealthSnapshot();
   const mqtt = getMqttStatus();
@@ -47,6 +49,7 @@ export async function healthController(_req, res) {
         ? "ok"
         : "degraded",
     timestamp: now,
+    softwareIdentification,
     summary: {
       systemStatus:
         serialHealth.serialReady && (!mqtt.enabled || mqtt.isConnected)

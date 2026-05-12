@@ -5,6 +5,7 @@ import {
   SERIAL_NAVIGATION_LIGHTS_BAUD_RATE,
   SERIAL_QR_NFC,
   SERIAL_QR_NFC_BAUD_RATE,
+  SERIAL_QR_NFC_FRAME_IDLE_MS,
   SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG,
   SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS,
   SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY,
@@ -39,15 +40,21 @@ let navigationFrameTimer;
 const portWriteQueue = new Map();
 /** Per `port.path`: FIFO labels waiting + current runner (for queue logging). */
 const portQueueMeta = new Map();
-const QR_NFC_FRAME_IDLE_MS = 80;
 const NAVIGATION_FRAME_IDLE_MS = 80;
 
 // Create/open a port lazily and reuse the same instance.
-async function getPort(currentPort, path, baudRate) {
+async function getPort(currentPort, path, baudRate, streamOverrides = {}) {
   if (!currentPort || !currentPort.isOpen) {
     const nextPort = new SerialPort({
       path,
       baudRate,
+      dataBits: 8,
+      parity: "none",
+      stopBits: 1,
+      rtscts: false,
+      xon: false,
+      xoff: false,
+      ...streamOverrides,
       autoOpen: false,
     });
 
@@ -230,7 +237,7 @@ function flushQrNfcFrame(buffer) {
       console.log(`[serial:qr-nfc][Mifare] header:`, header, `uid:`, uid, `rest:`, rest);
       // เพิ่ม field พิเศษ ส่งไปด้วย
       publishQrNfcPayload({
-        payloadText: payload,
+        payloadText: buffer.toString("hex").toUpperCase(),
         payloadBytes: Array.from(buffer),
         portPath: qrNfcSerialPort?.path || SERIAL_QR_NFC,
         mifare: {
@@ -277,7 +284,7 @@ function handleQrNfcChunk(chunk) {
     flushQrNfcFrame(qrNfcFrameBuffer);
     qrNfcFrameBuffer = Buffer.alloc(0);
     qrNfcFrameTimer = undefined;
-  }, QR_NFC_FRAME_IDLE_MS);
+  }, SERIAL_QR_NFC_FRAME_IDLE_MS);
 }
 
 function flushNavigationLightsFrame(buffer) {
@@ -728,6 +735,7 @@ export function getSerialConfig() {
     qrNfc: {
       path: SERIAL_QR_NFC,
       baudRate: SERIAL_QR_NFC_BAUD_RATE,
+      frameIdleMs: SERIAL_QR_NFC_FRAME_IDLE_MS,
     },
     writeTimeoutMs: SERIAL_WRITE_TIMEOUT_MS,
   };

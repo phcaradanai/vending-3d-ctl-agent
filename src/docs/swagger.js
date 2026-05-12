@@ -1,5 +1,8 @@
 import swaggerUi from "swagger-ui-express";
 import { API_BEARER_TOKEN } from "../config/env.js";
+import { getSoftwareIdentification } from "../config/softwareIdentification.js";
+
+const softwareId = getSoftwareIdentification();
 
 /** Multi-line OpenAPI `description` (Swagger UI แสดงขึ้นบรรทัดใหม่อ่านง่าย). */
 function d(...lines) {
@@ -10,8 +13,14 @@ const swaggerSpec = {
   openapi: "3.0.3",
   info: {
     title: "Vending 3D Control API",
-    version: "1.0.0",
+    version: softwareId.version,
     description: d(
+      "**Software identification (ISO/IEC 29110)** — configuration item `" +
+        softwareId.configurationItemId +
+        "`, release **v" +
+        softwareId.version +
+        "** (from `package.json`). Basic profile (29110-4/5): traceable name/version for support and change control.",
+      "",
       "Vending 3D control API — serial, navigation lights, SY600 commands, dispenser, health, log listing/tail.",
       "",
       "**Serial**",
@@ -38,13 +47,14 @@ const swaggerSpec = {
       "- **Registry image:** `docker compose -f docker-compose.image.yml up -d` (set `VENDING_CTL_IMAGE` if needed).",
       "",
       "**Docs**",
-      "- This spec is served at `/docs` (same origin as the API; default base URL below is `localhost:3303`)."
+      "- This spec is served at `/docs`. **Try it out** uses a **relative** server URL `/api/v1` so requests go to the same host/port as the page (works from another PC via `http://<linux-ip>:PORT/docs`).",
+      "- Optional: set `CORS_ALLOWED_ORIGINS` in server env (comma list) to lock browsers to specific admin UIs."
     ),
   },
   servers: [
     {
-      url: "http://localhost:3303/api/v1",
-      description: "Local server (API v1)",
+      url: "/api/v1",
+      description: "Same origin as Swagger UI (recommended)",
     },
   ],
   paths: {
@@ -57,6 +67,7 @@ const swaggerSpec = {
           "สถานะรวมแบบจัดกลุ่มสำหรับ monitoring / dashboard.",
           "",
           "**กล่องหลัก**",
+          "- `softwareIdentification` — รหัส SCI / เวอร์ชัน (ISO/IEC 29110-4/5 Basic profile; `version` จาก `package.json`)",
           "- `summary` — สรุปเร็ว: systemStatus, จำนวน alerts, serial/MQTT/SY600 แบบย่อ",
           "- `devices` — รายละเอียด serial แต่ละช่อง, **คิวเขียน serial** (`devices.serial.writeQueues`), MQTT, SY600",
           "- `diagnostics` — process (รวม memory), serial policy (timeout, nav retry), เวลา/timezone",
@@ -1113,6 +1124,7 @@ const swaggerSpec = {
         properties: {
           status: { type: "string", enum: ["ok", "degraded"], example: "ok" },
           timestamp: { type: "string", format: "date-time" },
+          softwareIdentification: { $ref: "#/components/schemas/SoftwareIdentification" },
           summary: { $ref: "#/components/schemas/HealthSummary" },
           devices: { $ref: "#/components/schemas/HealthDevices" },
           diagnostics: { $ref: "#/components/schemas/HealthDiagnostics" },
@@ -1122,7 +1134,44 @@ const swaggerSpec = {
             description: "Warnings for disconnected serial channels and MQTT misconfiguration",
           },
         },
-        required: ["status", "timestamp", "summary", "devices", "diagnostics", "alerts"],
+        required: [
+          "status",
+          "timestamp",
+          "softwareIdentification",
+          "summary",
+          "devices",
+          "diagnostics",
+          "alerts",
+        ],
+      },
+      SoftwareIdentification: {
+        type: "object",
+        description:
+          "SCI fields aligned with ISO/IEC 29110-4 (Basic profile) configuration / traceability and 29110-5 engineering identification.",
+        properties: {
+          isoReference: {
+            type: "string",
+            example: "ISO/IEC 29110-4:2018 (Basic profile), ISO/IEC 29110-5:2018",
+          },
+          lifecycleProfile: {
+            type: "string",
+            example: "Basic software engineering — configuration item identification & versioning",
+          },
+          configurationItemId: { type: "string", example: "SCI-vending-3d-ctl" },
+          name: { type: "string", example: "vending-3d-ctl" },
+          version: { type: "string", example: "1.0.0", description: "Semantic version from package.json" },
+          description: { type: "string" },
+          license: { type: "string", example: "ISC" },
+        },
+        required: [
+          "isoReference",
+          "lifecycleProfile",
+          "configurationItemId",
+          "name",
+          "version",
+          "description",
+          "license",
+        ],
       },
       SerialWriteRequest: {
         type: "object",

@@ -4,6 +4,8 @@ import "dotenv/config";
  * Loads configuration from `process.env`.
  * Variable names and section order mirror `.env.example` / `.env`.
  * Legacy aliases: `Serial_VENDING`, `Serial_NAVIGATION_LIGHTS`, `Serial_QR_NFC` (same as `SERIAL_*`).
+ * CORS: `CORS_ALLOWED_ORIGINS`; QR-NFC framing: `SERIAL_QR_NFC_FRAME_IDLE_MS`.
+ * Optional SCI id in CMDB: `SOFTWARE_CI_ID` (see `softwareIdentification.js`).
  */
 
 function toNumber(value, fallback) {
@@ -69,6 +71,13 @@ function toRegex(value, fallback) {
 
 // --- HTTP ---
 export const PORT = toNumber(process.env.PORT, 3000);
+
+/**
+ * CORS: comma-separated allowed `Origin` values (e.g. `http://192.168.1.10:5173`).
+ * Empty — reflect the request `Origin` (good for Swagger on another host + Bearer).
+ * `*` — allow any origin (wildcard; do not combine with credentialed cookies).
+ */
+export const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || "").trim();
 
 // --- API auth (`/api/v1/*` except GET /health when token set) ---
 /**
@@ -164,6 +173,14 @@ export const SERIAL_QR_NFC_BAUD_RATE = toNumber(
   process.env.SERIAL_QR_NFC_BAUD_RATE,
   9600
 );
+/**
+ * After last RX byte, wait this long (no `\\n` delimiter) before flushing one QR-NFC frame.
+ * Increase on Linux if scans split/merge (e.g. 120–200). Capped 10..2000 ms.
+ */
+export const SERIAL_QR_NFC_FRAME_IDLE_MS = Math.min(
+  2000,
+  Math.max(10, toNumber(process.env.SERIAL_QR_NFC_FRAME_IDLE_MS, 80))
+);
 
 // --- SY600 ---
 export const SY600_DEVICE_ADDRESS_HEX =
@@ -198,7 +215,7 @@ export const SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS = toNumber(
 // --- MQTT ---
 export const MQTT_ENABLED = toBoolean(process.env.MQTT_ENABLED, false);
 export const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || "mqtt://127.0.0.1:1883";
-export const MQTT_CLIENT_ID = process.env.MQTT_CLIENT_ID || "vending-3d-ctl";
+export const MQTT_CLIENT_ID = process.env.MQTT_CLIENT_ID+"-"+`${crypto.randomUUID().slice(0, 8)}` || "vending-3d-ctl"+"-"+`${crypto.randomUUID().slice(0, 8)}`;
 export const MQTT_USERNAME = process.env.MQTT_USERNAME || "";
 export const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "";
 export const MQTT_QRNFC_TOPIC = resolveEnvTemplate(

@@ -15,7 +15,7 @@ import jobRouter from "./routes/job.routes.js";
 
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
 import { setupSwagger } from "./docs/swagger.js";
-import { API_LOG_RETENTION_DAYS, APP_TIMEZONE } from "./config/env.js";
+import { API_LOG_RETENTION_DAYS, APP_TIMEZONE, CORS_ALLOWED_ORIGINS } from "./config/env.js";
 import { logAgentHttpMiddleware } from "./middleware/logAgentHttp.middleware.js";
 import { requireApiBearerToken } from "./middleware/apiBearerAuth.middleware.js";
 
@@ -73,7 +73,24 @@ morgan.token("localDateClf", () => formatClfDateInTimezone(APP_TIMEZONE));
 const combinedWithAppTimezone =
   ':remote-addr - :remote-user [:localDateClf] ":method :url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"';
 
-app.use(cors());
+const corsCommon = {
+  allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id", "Accept"],
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+  maxAge: 86400,
+  optionsSuccessStatus: 204,
+};
+function buildCorsOptions() {
+  const raw = CORS_ALLOWED_ORIGINS;
+  if (!raw) {
+    return { ...corsCommon, origin: true, credentials: true };
+  }
+  if (raw === "*") {
+    return { ...corsCommon, origin: "*", credentials: false };
+  }
+  const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return { ...corsCommon, origin: list.length ? list : true, credentials: true };
+}
+app.use(cors(buildCorsOptions()));
 app.use(express.json());
 app.use(logAgentHttpMiddleware);
 // Write access logs to logs/access.log with daily rotation.

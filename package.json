@@ -1,13 +1,13 @@
 {
   "name": "vending-3d-ctl",
   "version": "1.0.0",
-  "description": "",
+  "description": "Vending 3-door control API (serial, SY600, MQTT). Software configuration item (SCI) — versioning per ISO/IEC 29110-4/5 Basic profile; release id = package.json version.",
   "license": "ISC",
   "author": "",
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "nodemon index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
