@@ -766,6 +766,83 @@ const swaggerSpec = {
         },
       },
     },
+    "/sy600/cabinet/lights": {
+      post: {
+        tags: ["SY600"],
+        summary: "Cabinet — เปิด/ปิดแสงในตู้ (0x43)",
+        description: d(
+          "เฟรมจับจากสนาม — รูปแบบ `EE 01 …` เดียวกับ SY600",
+          "Patch ที่อยู่จาก `addressHex` หรือ `SY600_DEVICE_ADDRESS_HEX`; CRC ตาม `SY600_USE_CRC16`"
+        ),
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600CabinetLightsRequest" },
+              example: { on: true },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/cabinet/compressor": {
+      post: {
+        tags: ["SY600"],
+        summary: "Cabinet — เปิด/ปิดคอมเพรสเซอร์ (0x4A)",
+        description: d(
+          "เฟรมจับจากสนาม — คำสั่ง on/off แยกเทมเพลต",
+          "Patch ที่อยู่และ CRC เหมือน `/sy600/cabinet/lights`"
+        ),
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600CabinetCompressorRequest" },
+              example: { on: true },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/sy600/cabinet/compressor/temperature": {
+      post: {
+        tags: ["SY600"],
+        summary: "Cabinet — ตั้ง/อ่านจุดอุณหภูมิคอมเพรสเซอร์ (0x4A)",
+        description: d(
+          "**อ่าน:** `{ \"read\": true }` — ส่งเทมเพลตอ่านค่าที่ตั้ง",
+          "**ตั้ง:** `{ \"celsius\": <0..255> }` — patch byte อุณหภูมิบนเทมเพลต (เช่น 21°C = 21)",
+          "",
+          "ไม่ส่ง `read` และ `celsius` พร้อมกัน"
+        ),
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/Sy600CabinetCompressorTemperatureRequest" },
+              examples: {
+                read: { summary: "อ่านค่าที่ตั้ง", value: { read: true } },
+                set21: { summary: "ตั้ง 21°C", value: { celsius: 21 } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          400: { description: "Invalid payload", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
     "/vending/drugDispenser": {
       post: {
         tags: ["Dispenser"],
@@ -1437,6 +1514,68 @@ const swaggerSpec = {
             ),
           },
         },
+      },
+      Sy600CabinetLightsRequest: {
+        type: "object",
+        properties: {
+          on: { type: "boolean", description: "`true` = เปิดแสง, `false` = ปิด" },
+          addressHex: {
+            type: "string",
+            example: "AABBCCDD",
+            description: "*(optional)* ถ้าไม่ส่ง → ใช้ `SY600_DEVICE_ADDRESS_HEX`",
+          },
+        },
+        required: ["on"],
+      },
+      Sy600CabinetCompressorRequest: {
+        type: "object",
+        properties: {
+          on: { type: "boolean", description: "`true` = เปิดคอมเพรสเซอร์, `false` = ปิด" },
+          addressHex: {
+            type: "string",
+            example: "AABBCCDD",
+            description: "*(optional)* ถ้าไม่ส่ง → ใช้ `SY600_DEVICE_ADDRESS_HEX`",
+          },
+        },
+        required: ["on"],
+      },
+      Sy600CabinetCompressorTemperatureRequest: {
+        oneOf: [
+          {
+            type: "object",
+            properties: {
+              read: { type: "boolean", enum: [true], description: "อ่านค่าจุดอุณหภูมิที่ตั้ง (เทมเพลต read)" },
+              addressHex: {
+                type: "string",
+                example: "AABBCCDD",
+                description: "*(optional)* ถ้าไม่ส่ง → ใช้ `SY600_DEVICE_ADDRESS_HEX`",
+              },
+            },
+            required: ["read"],
+          },
+          {
+            type: "object",
+            properties: {
+              celsius: {
+                type: "integer",
+                minimum: 0,
+                maximum: 255,
+                example: 21,
+                description: d(
+                  "จุดอุณหภูมิหนึ่ง byte บนเทมเพลตจับจากสนาม (เช่น 21°C → ส่ง `21`)",
+                  "",
+                  "ต้องเป็น integer"
+                ),
+              },
+              addressHex: {
+                type: "string",
+                example: "AABBCCDD",
+                description: "*(optional)* ถ้าไม่ส่ง → ใช้ `SY600_DEVICE_ADDRESS_HEX`",
+              },
+            },
+            required: ["celsius"],
+          },
+        ],
       },
       DrugDispenserRequest: {
         type: "object",

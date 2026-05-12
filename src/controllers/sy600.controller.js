@@ -1,5 +1,8 @@
 import {
   sy600AckE0,
+  sy600CabinetCompressorControl,
+  sy600CabinetCompressorTemperature,
+  sy600CabinetLightsControl,
   sy600ChannelDispense,
   sy600ConveyorControl,
   sy600GetInfraredStatus,
@@ -90,6 +93,43 @@ export async function sy600ChannelDispenseController(req, res, next) {
 export async function sy600AckE0Controller(req, res, next) {
   try {
     return res.json(await sy600AckE0(parseBody(req)));
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function sy600CabinetLightsController(req, res, next) {
+  try {
+    const { on, addressHex } = parseBody(req);
+    if (typeof on !== "boolean") {
+      const error = new Error('Body must include boolean "on"');
+      error.status = 400;
+      throw error;
+    }
+    return res.json(await sy600CabinetLightsControl({ on, addressHex }));
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function sy600CabinetCompressorController(req, res, next) {
+  try {
+    const { on, addressHex } = parseBody(req);
+    if (typeof on !== "boolean") {
+      const error = new Error('Body must include boolean "on"');
+      error.status = 400;
+      throw error;
+    }
+    return res.json(await sy600CabinetCompressorControl({ on, addressHex }));
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function sy600CabinetCompressorTemperatureController(req, res, next) {
+  try {
+    const { read, celsius, addressHex } = parseBody(req);
+    return res.json(await sy600CabinetCompressorTemperature({ read, celsius, addressHex }));
   } catch (error) {
     return next(error);
   }

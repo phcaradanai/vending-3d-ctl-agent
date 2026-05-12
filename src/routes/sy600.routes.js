@@ -1,6 +1,9 @@
 import { Router } from "express";
 import {
   sy600AckE0Controller,
+  sy600CabinetCompressorController,
+  sy600CabinetCompressorTemperatureController,
+  sy600CabinetLightsController,
   sy600ChannelDispenseController,
   sy600ConveyorController,
   sy600InfraredController,
@@ -136,5 +139,28 @@ sy600Router.post("/sy600/28/dispense", sy600ChannelDispenseController);
 // ถ้าไม่ส่ง addressHex ใช้ค่า SY600_DEVICE_ADDRESS_HEX จาก env
 // =============================================================================
 sy600Router.post("/sy600/e0/ack", sy600AckE0Controller);
+
+// =============================================================================
+// POST /sy600/cabinet/lights  — เปิด/ปิดแสงในตู้ (เฟรมจับจากสนาม 0x43)
+// =============================================================================
+// Body: { "on": true|false, "addressHex"?: "AABBCCDD" }
+// =============================================================================
+sy600Router.post("/sy600/cabinet/lights", sy600CabinetLightsController);
+
+// =============================================================================
+// POST /sy600/cabinet/compressor  — เปิด/ปิดคอมเพรสเซอร์ (เฟรมจับจากสนาม 0x4A)
+// =============================================================================
+// Body: { "on": true|false, "addressHex"?: "AABBCCDD" }
+// =============================================================================
+sy600Router.post("/sy600/cabinet/compressor", sy600CabinetCompressorController);
+
+// =============================================================================
+// POST /sy600/cabinet/compressor/temperature  — ตั้งจุดอุณหภูมิ (°C) หรืออ่านค่าที่ตั้ง
+// =============================================================================
+// Body อย่างใดอย่างหนึ่ง:
+//   { "read": true, "addressHex"?: "AABBCCDD" }
+//   { "celsius": <0..255>, "addressHex"?: "AABBCCDD" }
+// =============================================================================
+sy600Router.post("/sy600/cabinet/compressor/temperature", sy600CabinetCompressorTemperatureController);
 
 export default sy600Router;

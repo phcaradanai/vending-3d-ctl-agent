@@ -232,6 +232,24 @@ function decodeCommandResponse(frame) {
           resultText: b[8] === 0 ? "Success" : `Failed (code 0x${toHex(b[8] ?? 0)})`,
         },
       };
+    case 0x43:
+      return {
+        ...base,
+        decoded: {
+          cabinet: "lights",
+          dataBytes: b,
+          hint: "Cabinet lighting (captured frame 0x43); payload vendor-specific.",
+        },
+      };
+    case 0x4a:
+      return {
+        ...base,
+        decoded: {
+          cabinet: "compressor-or-environment",
+          dataBytes: b,
+          hint: "Cabinet 0x4A (compressor / temperature / etc.); payload vendor-specific.",
+        },
+      };
     case 0xe0: {
       const errorCode = b[8];
       return {
@@ -263,6 +281,7 @@ function sy600DecodedSummary(decoded) {
     decoded.sensorStatusText ??
     decoded.errorText ??
     decoded.message ??
+    decoded.hint ??
     null
   );
 }
@@ -463,5 +482,139 @@ export async function sy600AckE0({ addressHex }) {
     txHex,
     response,
   };
+}
+
+// --- Cabinet extension (same EE01… wire format as SY600; captured hex from field / ZK vendor) ---
+
+/** Captured TX templates (AABBCCDD = placeholder; patched from `SY600_DEVICE_ADDRESS_HEX` or `addressHex`). */
+const CABINET_LIGHTS_ON_TEMPLATE = "EE01AABBCCDD430002010192B4";
+const CABINET_LIGHTS_OFF_TEMPLATE = "EE01AABBCCDD43000201005374";
+const CABINET_COMPRESSOR_ON_TEMPLATE = "EE01AABBCCDD4A000601001201000000000243";
+const CABINET_COMPRESSOR_OFF_TEMPLATE = "EE01AABBCCDD4A000601001200000000006E43";
+const CABINET_COMP_TEMP_SET_TEMPLATE = "EE01AABBCCDD4A00060100001500004206";
+const CABINET_COMP_TEMP_READ_TEMPLATE = "EE01AABBCCDD4A00060000000000056E01";
+
+/** Byte index in full frame where set-point °C is stored (template above, 21°C = 0x15). */
+const CABINET_COMP_TEMP_CELSIUS_BYTE_INDEX = 12;
+
+function normalizeHexLine(hex) {
+  return String(hex || "").replace(/\s+/g, "").toUpperCase();
+}
+
+/**
+ * Patch bytes 2–5 (device address) and trailing Modbus CRC16 (LE) on a full captured frame.
+ * When `SY600_USE_CRC16` is false, CRC bytes are forced to `00 00` (match `buildSy600Frame`).
+ */
+function patchCapturedCabinetFrame(templateHex, { addressHex, bytePatches = [] } = {}) {
+  const h = normalizeHexLine(templateHex);
+  if (h.length % 2 !== 0) {
+    const error = new Error("Cabinet frame hex must have even length");
+    error.status = 400;
+    throw error;
+  }
+  const buf = Buffer.from(h, "hex");
+  if (buf.length < 11) {
+    const error = new Error("Cabinet frame too short");
+    error.status = 400;
+    throw error;
+  }
+  if (buf[0] !== SY600_START_TX || buf[1] !== SY600_VERSION) {
+    const error = new Error("Cabinet frame must start with EE 01");
+    error.status = 400;
+    throw error;
+  }
+  const addr = parseDeviceAddressHex(addressHex || SY600_DEVICE_ADDRESS_HEX);
+  addr.copy(buf, 2, 0, 4);
+  for (const p of bytePatches) {
+    ensureByte(p.value, `patch@${p.offset}`);
+    buf[p.offset] = p.value & 0xff;
+  }
+  const withoutCrc = buf.subarray(0, buf.length - 2);
+  if (SY600_USE_CRC16) {
+    const crc = crc16Modbus(withoutCrc);
+    buf[buf.length - 2] = crc & 0xff;
+    buf[buf.length - 1] = (crc >> 8) & 0xff;
+  } else {
+    buf[buf.length - 2] = 0;
+    buf[buf.length - 1] = 0;
+  }
+  return buf;
+}
+
+async function sendCabinetCapturedFrame(templateHex, queueLabel, patchOptions = {}) {
+  const frame = patchCapturedCabinetFrame(templateHex, patchOptions);
+  const txHex = frame.toString("hex").toUpperCase();
+  const writeResult = await writeVendingSerialData(txHex, queueLabel);
+  const parsed = parseSy600FrameFromHex(writeResult.responseHex);
+  const response = decodeCommandResponse(parsed);
+  logAgent.sy600({
+    event: "sy600.cabinet.tx.complete",
+    queueLabel,
+    txHexPrefix: txHex.slice(0, 256),
+    responseHexPrefix: response.rawHex?.slice(0, 256) ?? null,
+    decodedSummary: sy600DecodedSummary(response.decoded),
+  });
+  return { txHex, response };
+}
+
+/**
+ * Cabinet interior lighting (captured `0x43` frames on vending serial).
+ * @param {{ on: boolean, addressHex?: string }} params
+ */
+export async function sy600CabinetLightsControl({ on, addressHex }) {
+  const template = on ? CABINET_LIGHTS_ON_TEMPLATE : CABINET_LIGHTS_OFF_TEMPLATE;
+  return sendCabinetCapturedFrame(template, `sy600-cabinet-lights-${on ? "on" : "off"}`, {
+    addressHex,
+  });
+}
+
+/**
+ * Compressor power (captured `0x4A` frames).
+ * @param {{ on: boolean, addressHex?: string }} params
+ */
+export async function sy600CabinetCompressorControl({ on, addressHex }) {
+  const template = on ? CABINET_COMPRESSOR_ON_TEMPLATE : CABINET_COMPRESSOR_OFF_TEMPLATE;
+  return sendCabinetCapturedFrame(template, `sy600-cabinet-compressor-${on ? "on" : "off"}`, {
+    addressHex,
+  });
+}
+
+/**
+ * Compressor temperature set-point (°C) or read current set-point (captured `0x4A` frames).
+ * @param {{ read?: boolean, celsius?: number, addressHex?: string }} params
+ */
+export async function sy600CabinetCompressorTemperature({ read, celsius, addressHex }) {
+  if (read === true) {
+    if (celsius !== undefined && celsius !== null) {
+      const error = new Error('Use either { "read": true } or { "celsius": <0..255> }, not both');
+      error.status = 400;
+      throw error;
+    }
+    return sendCabinetCapturedFrame(
+      CABINET_COMP_TEMP_READ_TEMPLATE,
+      "sy600-cabinet-compressor-temp-read",
+      { addressHex }
+    );
+  }
+  if (celsius === undefined || celsius === null) {
+    const error = new Error(
+      'Send { "read": true } to query compressor set-point, or { "celsius": <n> } to set (°C as one byte)'
+    );
+    error.status = 400;
+    throw error;
+  }
+  if (!Number.isInteger(celsius) || celsius < 0 || celsius > 255) {
+    const error = new Error("celsius must be integer 0..255 (typical set-point 10..40)");
+    error.status = 400;
+    throw error;
+  }
+  return sendCabinetCapturedFrame(
+    CABINET_COMP_TEMP_SET_TEMPLATE,
+    "sy600-cabinet-compressor-temp-set",
+    {
+      addressHex,
+      bytePatches: [{ offset: CABINET_COMP_TEMP_CELSIUS_BYTE_INDEX, value: celsius }],
+    }
+  );
 }
 
