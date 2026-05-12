@@ -6,7 +6,7 @@ import {
   MQTT_PASSWORD,
   MQTT_QRNFC_QOS,
   MQTT_QRNFC_RETAIN,
-  MQTT_QRNFC_MIFARE_SIGNATURE,
+  matchQrNfcMifareFromBytes,
   MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX,
   MQTT_QRNFC_TOPIC,
   MQTT_USERNAME,
@@ -170,15 +170,8 @@ export async function publishQrNfcPayload({ payloadText, payloadBytes, portPath,
   // แยกประเภทข้อมูล QR Code/NFC (โดยเฉพาะสำหรับ Mifare signature)
   let type = "unknown";
 
-  // ตรวจสอบความน่าจะเป็นข้อมูล NFC Mifare: มัก payloadBytes เป็นความยาว 5 bytes และรูปแบบ 0x02, 0xFF, 0x01, 0x09, 0x00 ขึ้นต้น (ตัวอย่าง signature สำหรับ Mifare Classic)
-  // หมายเหตุ: Signature อื่นๆ อาจจะต้องปรับแต่งตาม scanner ที่ใช้หรือ document ของ NFC รุ่นนั้นๆ
-  const mifareClassicSignature = MQTT_QRNFC_MIFARE_SIGNATURE;
-
-  if (
-    Array.isArray(payloadBytes) &&
-    payloadBytes.length >= 5 &&
-    mifareClassicSignature.every((sig, i) => payloadBytes[i] === sig)
-  ) {
+  // ตรวจสอบความน่าจะเป็นข้อมูล NFC Mifare: prefix 5 byte (รองรับหลายแบบ — ZK QR500-bm Linux ใช้ 02,01,… แทน 02,FF,…)
+  if (Array.isArray(payloadBytes) && matchQrNfcMifareFromBytes(payloadBytes)) {
     type = "nfc-mifare";
   }
   else if (typeof payloadText === "string") {

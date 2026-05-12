@@ -1,10 +1,12 @@
 import "dotenv/config";
+import crypto from "node:crypto";
 
 /**
  * Loads configuration from `process.env`.
  * Variable names and section order mirror `.env.example` / `.env`.
  * Legacy aliases: `Serial_VENDING`, `Serial_NAVIGATION_LIGHTS`, `Serial_QR_NFC` (same as `SERIAL_*`).
  * CORS: `CORS_ALLOWED_ORIGINS`; QR-NFC framing: `SERIAL_QR_NFC_FRAME_IDLE_MS`.
+ * MQTT Mifare prefixes: `MQTT_QRNFC_MIFARE_SIGNATURE` — hex bytes comma-separated; use `|` between alternates (e.g. ZK QR500-bm on Linux `02,01,01,09,00` vs Windows `02,FF,01,09,00`).
  * Optional SCI id in CMDB: `SOFTWARE_CI_ID` (see `softwareIdentification.js`).
  */
 
@@ -53,6 +55,29 @@ function toHexByteArray(value, fallback) {
     return fallback;
   }
   return bytes;
+}
+
+/** Default Mifare-classic prefixes: Windows-style `02 FF…` and Linux (ZK QR500-bm) `02 01…` on same hardware. */
+const DEFAULT_MIFARE_SIGNATURES = [
+  [0x02, 0xff, 0x01, 0x09, 0x00],
+  [0x02, 0x01, 0x01, 0x09, 0x00],
+];
+
+/**
+ * Parse `MQTT_QRNFC_MIFARE_SIGNATURE`: comma-separated hex bytes; use `|` between alternate headers.
+ * @param {string | undefined} value
+ * @returns {number[][] | null} null = use built-in defaults
+ */
+function parseMifareSignatureEnv(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const segments = raw.split("|").map((s) => s.trim()).filter(Boolean);
+  const out = [];
+  for (const seg of segments) {
+    const arr = toHexByteArray(seg, null);
+    if (arr && arr.length) out.push(arr);
+  }
+  return out.length ? out : null;
 }
 
 function resolveEnvTemplate(value) {
@@ -215,7 +240,8 @@ export const SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS = toNumber(
 // --- MQTT ---
 export const MQTT_ENABLED = toBoolean(process.env.MQTT_ENABLED, false);
 export const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || "mqtt://127.0.0.1:1883";
-export const MQTT_CLIENT_ID = process.env.MQTT_CLIENT_ID+"-"+`${crypto.randomUUID().slice(0, 8)}` || "vending-3d-ctl"+"-"+`${crypto.randomUUID().slice(0, 8)}`;
+const _mqttClientIdBase = String(process.env.MQTT_CLIENT_ID || "vending-3d-ctl").trim() || "vending-3d-ctl";
+export const MQTT_CLIENT_ID = `${_mqttClientIdBase}-${crypto.randomUUID().slice(0, 8)}`;
 export const MQTT_USERNAME = process.env.MQTT_USERNAME || "";
 export const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "";
 export const MQTT_QRNFC_TOPIC = resolveEnvTemplate(
@@ -223,10 +249,29 @@ export const MQTT_QRNFC_TOPIC = resolveEnvTemplate(
 );
 export const MQTT_QRNFC_QOS = toNumber(process.env.MQTT_QRNFC_QOS, 0);
 export const MQTT_QRNFC_RETAIN = toBoolean(process.env.MQTT_QRNFC_RETAIN, false);
-export const MQTT_QRNFC_MIFARE_SIGNATURE = toHexByteArray(
-  process.env.MQTT_QRNFC_MIFARE_SIGNATURE,
-  [0x02, 0xff, 0x01, 0x09, 0x00]
-);
+/** Mifare frame prefixes (5 bytes typical). Use `|` in env for alternates (e.g. ZK QR500-bm on Linux vs Windows). */
+export const MQTT_QRNFC_MIFARE_SIGNATURES =
+  parseMifareSignatureEnv(process.env.MQTT_QRNFC_MIFARE_SIGNATURE) ??
+  DEFAULT_MIFARE_SIGNATURES.map((row) => [...row]);
+
+/** @deprecated use `MQTT_QRNFC_MIFARE_SIGNATURES` — first configured prefix */
+export const MQTT_QRNFC_MIFARE_SIGNATURE = MQTT_QRNFC_MIFARE_SIGNATURES[0];
+
+/**
+ * @param {Buffer | number[]} input
+ * @returns {{ headerLength: number; signature: number[] } | null}
+ */
+export function matchQrNfcMifareFromBytes(input) {
+  const bytes = Buffer.isBuffer(input) ? input : Buffer.from(input);
+  for (const sig of MQTT_QRNFC_MIFARE_SIGNATURES) {
+    const hl = sig.length;
+    if (bytes.length >= hl + 4 && sig.every((b, i) => bytes[i] === b)) {
+      return { headerLength: hl, signature: sig };
+    }
+  }
+  return null;
+}
+
 export const MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX = toRegex(
   process.env.MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX ||
     "([0-9a-f\\-]{36})_(\\d{8})_(\\d+)_(\\d+)_(IN|OUT)_(\\d{14})",

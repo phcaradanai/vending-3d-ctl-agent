@@ -1,6 +1,6 @@
 import { SerialPort } from "serialport";
 import {
-  MQTT_QRNFC_MIFARE_SIGNATURE,
+  matchQrNfcMifareFromBytes,
   SERIAL_NAVIGATION_LIGHTS,
   SERIAL_NAVIGATION_LIGHTS_BAUD_RATE,
   SERIAL_QR_NFC,
@@ -220,17 +220,11 @@ function flushQrNfcFrame(buffer) {
 
   // แยกข้อมูล mifare: HEADER (5 bytes), UID (4 bytes), Data/Other (เหลือ)
   // ตัวอย่าง: [HEADER][UID][DATA/อื่นๆ]
-  // มี signature จาก config: MQTT_QRNFC_MIFARE_SIGNATURE
+  // Prefixes: `MQTT_QRNFC_MIFARE_SIGNATURES` (see env — ZK QR500-bm may use 02,FF… on Windows and 02,01… on Linux)
   try {
-    // import อะไรเพิ่มไม่ได้ ใช้ global เอาจาก config
-    const headerLength = MQTT_QRNFC_MIFARE_SIGNATURE.length;
-    if (
-      buffer.length >= headerLength + 4 && // HEADER + UID อย่างต่ำ
-      MQTT_QRNFC_MIFARE_SIGNATURE.every(
-        (val, idx) => buffer[idx] === val
-      )
-    ) {
-      // ตรง signature mifare
+    const mifareMatch = matchQrNfcMifareFromBytes(buffer);
+    if (mifareMatch) {
+      const headerLength = mifareMatch.headerLength;
       const header = Array.from(buffer.slice(0, headerLength));
       const uid = Array.from(buffer.slice(headerLength, headerLength + 4));
       const rest = Array.from(buffer.slice(headerLength + 4));
