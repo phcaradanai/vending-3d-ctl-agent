@@ -878,6 +878,16 @@ const swaggerSpec = {
               },
             },
           },
+          502: {
+            description: "Dispense flow failed part-way through — see data.steps for exactly which step and why",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/DrugDispenserResponse",
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -1577,21 +1587,57 @@ const swaggerSpec = {
           },
         ],
       },
+      DrugDispenserItem: {
+        type: "object",
+        description: "One pick — a layer/channel range on the vending unit, e.g. floor 4 channel 0.",
+        properties: {
+          layer: { type: "number", example: 4, description: "SY600 floor/layer (0xC3 target)" },
+          channelStart: { type: "number", example: 0 },
+          channelEnd: { type: "number", example: 0 },
+          qty: { type: "number", example: 1, description: "Micro-step dispense repeat count (default 1)" },
+        },
+        required: ["layer", "channelStart", "channelEnd"],
+      },
       DrugDispenserRequest: {
         type: "object",
         properties: {
           prescription: { type: "string", example: "1234567909" },
           ctrl: { type: "number", example: 3 },
-          items: { type: "array", items: { type: "object" } },
+          items: {
+            type: "array",
+            description: "One or more picks, across one or more layers — dispensed in order before delivery.",
+            items: { $ref: "#/components/schemas/DrugDispenserItem" },
+          },
+          doorNo: { type: "number", enum: [1, 2, 3], example: 1, description: "Output/pickup door for delivery. Defaults to DOOR_TYPE_STANDBY[0]." },
           type: { type: "string", example: "standby" },
           url: { type: "string", example: "http://host/api/vending/drugDispense/hook/status" },
         },
-        required: ["prescription"],
+        required: ["prescription", "items"],
+      },
+      DrugDispenserStep: {
+        type: "object",
+        description: "One physical step of the flow (lift/dispense per item, then lift-to-delivery/output-door-open/conveyor/pickup-door-open/output-door-close).",
+        properties: {
+          phase: { type: "string", example: "dispense" },
+          success: { type: "boolean" },
+          txHex: { type: "string", nullable: true },
+          response: { type: "object", nullable: true, description: "Decoded SY600 response (present when success is true)" },
+          error: {
+            type: "object",
+            nullable: true,
+            properties: {
+              message: { type: "string" },
+              status: { type: "number" },
+              asyncError: { type: "object", nullable: true, description: "Set when an unsolicited 0xE0 report was seen instead of the expected ack" },
+            },
+          },
+        },
+        required: ["phase", "success"],
       },
       DrugDispenserResponse: {
         type: "object",
         properties: {
-          ok: { type: "number", example: 1 },
+          ok: { type: "number", example: 1, description: "1 on success, 0 on failure" },
           data: {
             type: "object",
             properties: {
@@ -1605,10 +1651,11 @@ const swaggerSpec = {
               },
               prescriptionNo: { type: "string", example: "1234567909" },
               type: { type: "string", example: "standby" },
-              status: { type: "string", example: "pending" },
+              status: { type: "string", enum: ["success", "failed"], example: "success" },
               door: { type: "number", example: 1 },
               vendingCode: { type: "string", example: "FFFFFFFF" },
-              raw: { type: "object" },
+              steps: { type: "array", items: { $ref: "#/components/schemas/DrugDispenserStep" } },
+              error: { type: "string", nullable: true, description: "Present only when status is failed" },
             },
           },
         },
