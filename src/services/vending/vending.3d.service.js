@@ -22,6 +22,16 @@ function ensureItems(items) {
       error.status = 400;
       throw error;
     }
+    // 1-indexed at this API boundary (matches how a floor/channel is spoken about
+    // physically); converted per-command below since 0xC3 and 0xC4 don't agree
+    // on indexing at the wire level.
+    for (const field of ["layer", "channelStart", "channelEnd"]) {
+      if (!Number.isInteger(item[field]) || item[field] < 1) {
+        const error = new Error(`items[${index}].${field} must be an integer >= 1 (1-indexed)`);
+        error.status = 400;
+        throw error;
+      }
+    }
     return item;
   });
 }
@@ -104,10 +114,14 @@ export async function dispenseOrder({ prescriptionNo, items, doorNo }) {
           qty: item.qty ?? 1,
         },
         () =>
+          // 0xC4 layer/channel are 0-indexed at the device — confirmed against real
+          // hardware 2026-07-08: requesting layer=1, channel=1-3 physically fired
+          // layer 2, channel 2-4. 0xC3 (lift, above) is 1-indexed and unaffected —
+          // the two commands do not share an indexing convention.
           sy600MicroStepDispense({
-            layer: item.layer,
-            channelStart: item.channelStart,
-            channelEnd: item.channelEnd,
+            layer: item.layer - 1,
+            channelStart: item.channelStart - 1,
+            channelEnd: item.channelEnd - 1,
             repeat: item.qty ?? 1,
           })
       );
