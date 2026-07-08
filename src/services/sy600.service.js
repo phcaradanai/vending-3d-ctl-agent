@@ -84,47 +84,33 @@ function buildSy600Frame(command, dataBytes = []) {
   return Buffer.concat([withoutCrc, crcBuffer]);
 }
 
-function parseSy600FrameFromHex(responseHex) {
-  const raw = Buffer.from(responseHex, "hex");
-  if (raw.length < 11) {
-    const error = new Error("Response too short for SY600 frame");
-    error.status = 502;
-    throw error;
-  }
-  const start = raw[0];
-  const version = raw[1];
-  const address = raw.subarray(2, 6);
-  const command = raw[6];
-  const length = raw.readUInt16BE(7);
-  const expectedTotal = 1 + 1 + 4 + 1 + 2 + length + 2;
-  if (raw.length < expectedTotal) {
-    const error = new Error(`Incomplete SY600 frame: expected ${expectedTotal} bytes, got ${raw.length}`);
-    error.status = 502;
-    throw error;
-  }
-  const data = raw.subarray(9, 9 + length);
-  const crcRead = raw.readUInt16LE(9 + length);
-
+function tryParseSy600FrameAt(raw, offset) {
+  const start = raw[offset];
   if (start !== SY600_START_RX && start !== SY600_START_TX) {
-    const error = new Error(`Unexpected frame start byte: 0x${toHex(start)}`);
-    error.status = 502;
-    throw error;
+    return null;
   }
+  if (raw.length - offset < 9) {
+    return null;
+  }
+  const version = raw[offset + 1];
   if (version !== SY600_VERSION) {
-    const error = new Error(`Unexpected frame version: 0x${toHex(version)}`);
-    error.status = 502;
-    throw error;
+    return null;
   }
+  const address = raw.subarray(offset + 2, offset + 6);
+  const command = raw[offset + 6];
+  const length = raw.readUInt16BE(offset + 7);
+  const frameTotal = 1 + 1 + 4 + 1 + 2 + length + 2;
+  if (raw.length - offset < frameTotal) {
+    return null;
+  }
+  const data = raw.subarray(offset + 9, offset + 9 + length);
+  const crcRead = raw.readUInt16LE(offset + 9 + length);
 
   if (SY600_USE_CRC16) {
-    const checkTarget = raw.subarray(0, 9 + length);
+    const checkTarget = raw.subarray(offset, offset + 9 + length);
     const crcExpected = crc16Modbus(checkTarget);
     if (crcExpected !== crcRead) {
-      const error = new Error(
-        `CRC mismatch: expected 0x${crcExpected.toString(16)}, got 0x${crcRead.toString(16)}`
-      );
-      error.status = 502;
-      throw error;
+      return null;
     }
   }
 
@@ -136,7 +122,84 @@ function parseSy600FrameFromHex(responseHex) {
     length,
     dataBytes: Array.from(data),
     crc16: crcRead,
-    rawHex: raw.toString("hex").toUpperCase(),
+    rawHex: raw.subarray(offset, offset + frameTotal).toString("hex").toUpperCase(),
+    frameTotal,
+  };
+}
+
+/**
+ * Walk `responseHex` frame-by-frame instead of trusting the first byte onward.
+ *
+ * `writeToPort` captures every byte that lands inside one idle-gap window with no
+ * frame awareness — the device can (and does, per the vendor protocol doc) interleave
+ * an unsolicited `0xE0` async error report with the ack for whatever command was just
+ * sent. A single-frame parser that blindly reads offset 0 will decode that stray `0xE0`
+ * as "the" response and report failure even when the real command succeeded. Returning
+ * every frame found (skipping unparseable/garbage bytes to resync) lets the caller pick
+ * the frame whose `command` actually matches what was sent.
+ */
+function parseSy600Frames(responseHex) {
+  const raw = Buffer.from(responseHex, "hex");
+  if (raw.length < 11) {
+    const error = new Error("Response too short for SY600 frame");
+    error.status = 502;
+    throw error;
+  }
+
+  const frames = [];
+  let offset = 0;
+  while (offset < raw.length) {
+    const frame = tryParseSy600FrameAt(raw, offset);
+    if (frame) {
+      frames.push(frame);
+      offset += frame.frameTotal;
+      continue;
+    }
+    offset += 1; // resync: skip a byte and keep scanning for the next valid frame start
+  }
+
+  if (!frames.length) {
+    const error = new Error(
+      `No parseable SY600 frame in response (${raw.length} bytes): ${raw.toString("hex").toUpperCase()}`
+    );
+    error.status = 502;
+    throw error;
+  }
+
+  return frames;
+}
+
+/**
+ * Pick the frame that actually answers `expectedCommand`, separating out any
+ * unsolicited `0xE0` async error-report frames captured in the same window.
+ */
+function pickSy600Response(frames, expectedCommand) {
+  const asyncErrorFrames = frames.filter((f) => f.command === 0xe0 && expectedCommand !== 0xe0);
+  const matched = frames.find((f) => f.command === expectedCommand);
+
+  if (!matched) {
+    if (asyncErrorFrames.length) {
+      const decoded = decodeCommandResponse(asyncErrorFrames[0]);
+      const error = new Error(
+        `Device sent async error 0x${toHex(0xe0)} (${decoded.decoded.errorText}) instead of ack for 0x${toHex(
+          expectedCommand
+        )}; no matching response frame received`
+      );
+      error.status = 502;
+      error.asyncError = decoded;
+      throw error;
+    }
+    const seenCommands = frames.map((f) => `0x${toHex(f.command)}`).join(", ");
+    const error = new Error(
+      `Unexpected response: expected command 0x${toHex(expectedCommand)}, got [${seenCommands}]`
+    );
+    error.status = 502;
+    throw error;
+  }
+
+  return {
+    matched,
+    asyncErrors: asyncErrorFrames.map((f) => decodeCommandResponse(f)),
   };
 }
 
@@ -293,8 +356,18 @@ async function sendSy600(command, dataBytes, labelSuffix = "") {
     ? `sy600-0x${toHex(command)}${labelSuffix}`
     : `sy600-0x${toHex(command)}`;
   const writeResult = await writeVendingSerialData(txHex, queueLabel);
-  const parsed = parseSy600FrameFromHex(writeResult.responseHex);
-  const response = decodeCommandResponse(parsed);
+  const frames = parseSy600Frames(writeResult.responseHex);
+  const { matched, asyncErrors } = pickSy600Response(frames, command);
+  const response = decodeCommandResponse(matched);
+  response.asyncErrors = asyncErrors;
+  if (asyncErrors.length) {
+    logAgent.sy600({
+      event: "sy600.async.error",
+      command: `0x${toHex(command)}`,
+      queueLabel,
+      asyncErrors,
+    });
+  }
   logAgent.sy600({
     event: "sy600.tx.complete",
     command: `0x${toHex(command)}`,
@@ -436,8 +509,18 @@ export async function sy600ChannelDispense({ layerAddressHex, channelStart, chan
   }
   const txHex = frame.toString("hex").toUpperCase();
   const writeResult = await writeVendingSerialData(txHex, "sy600-0x28");
-  const parsed = parseSy600FrameFromHex(writeResult.responseHex);
-  const response = decodeCommandResponse(parsed);
+  const frames = parseSy600Frames(writeResult.responseHex);
+  const { matched, asyncErrors } = pickSy600Response(frames, 0x28);
+  const response = decodeCommandResponse(matched);
+  response.asyncErrors = asyncErrors;
+  if (asyncErrors.length) {
+    logAgent.sy600({
+      event: "sy600.async.error",
+      command: "0x28",
+      queueLabel: "sy600-0x28",
+      asyncErrors,
+    });
+  }
   logAgent.sy600({
     event: "sy600.tx.complete",
     command: "0x28",
@@ -468,8 +551,10 @@ export async function sy600AckE0({ addressHex }) {
   }
   const txHex = frame.toString("hex").toUpperCase();
   const writeResult = await writeVendingSerialData(txHex, "sy600-0xE0");
-  const parsed = parseSy600FrameFromHex(writeResult.responseHex);
-  const response = decodeCommandResponse(parsed);
+  const frames = parseSy600Frames(writeResult.responseHex);
+  const { matched, asyncErrors } = pickSy600Response(frames, 0xe0);
+  const response = decodeCommandResponse(matched);
+  response.asyncErrors = asyncErrors;
   logAgent.sy600({
     event: "sy600.tx.complete",
     command: "0xE0",
@@ -545,8 +630,10 @@ async function sendCabinetCapturedFrame(templateHex, queueLabel, patchOptions = 
   const frame = patchCapturedCabinetFrame(templateHex, patchOptions);
   const txHex = frame.toString("hex").toUpperCase();
   const writeResult = await writeVendingSerialData(txHex, queueLabel);
-  const parsed = parseSy600FrameFromHex(writeResult.responseHex);
-  const response = decodeCommandResponse(parsed);
+  const frames = parseSy600Frames(writeResult.responseHex);
+  const { matched, asyncErrors } = pickSy600Response(frames, frame[6]);
+  const response = decodeCommandResponse(matched);
+  response.asyncErrors = asyncErrors;
   logAgent.sy600({
     event: "sy600.cabinet.tx.complete",
     queueLabel,
