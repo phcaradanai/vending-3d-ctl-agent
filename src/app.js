@@ -12,6 +12,7 @@ import drugDispenserRouter from "./routes/drugDispenser.routes.js";
 import sy600Router from "./routes/sy600.routes.js";
 import logsRouter from "./routes/logs.routes.js";
 import jobRouter from "./routes/job.routes.js";
+import { getManualTestCatalog } from "./manual-test/commandCatalog.js";
 
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
 import { setupSwagger } from "./docs/swagger.js";
@@ -25,6 +26,7 @@ const API_BASE_PATH = "/api/v1";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const logsDirectory = path.resolve(__dirname, "../logs");
+const manualTestDirectory = path.resolve(__dirname, "../public/manual-test");
 
 // Ensure log directory exists before creating rotating stream.
 fs.mkdirSync(logsDirectory, { recursive: true });
@@ -98,6 +100,14 @@ app.use(morgan(combinedWithAppTimezone, { stream: accessLogStream }));
 // Also print request logs to stdout for local debugging.
 app.use(morgan(combinedWithAppTimezone));
 setupSwagger(app);
+
+app.get("/manual-test/commands.json", (_req, res) => {
+  res.json(getManualTestCatalog());
+});
+app.use("/manual-test", express.static(manualTestDirectory));
+app.get("/manual-test", (_req, res) => {
+  res.sendFile(path.join(manualTestDirectory, "index.html"));
+});
 
 // Liveness/readiness without Bearer (serial + command routes stay behind `requireApiBearerToken`).
 app.use(API_BASE_PATH, healthRouter);
