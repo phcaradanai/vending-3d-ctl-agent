@@ -353,24 +353,27 @@ export const MANUAL_TEST_COMMANDS = [
     risk: "hardware-write",
     focus: { area: "cabinetLights" },
     description: "Turn cabinet lights on or off (lamp 1 or 2).",
-    defaultBody: { on: true, lamp: 1 },
+    defaultBody: { on: true, lamp: 1, addressHex: "00000000" },
     controls: [
       { path: ["on"], label: "Power", type: "boolean" },
       { path: ["lamp"], label: "Lamp", type: "number", min: 1, max: 2 },
+      { path: ["addressHex"], label: "Address (Hex)", type: "text" },
     ],
   },
   {
     id: "cabinetStatus",
     group: "Cabinet",
     title: "Device status (0x44)",
-    method: "GET",
+    method: "POST",
     endpoint: "/api/v1/sy600/cabinet/status",
     protected: true,
     risk: "read-via-serial",
     focus: { area: "compressor" },
     description: "Query lights, glass heater, compressor cooling/heating, door, and defrost state.",
-    defaultBody: null,
-    controls: [],
+    defaultBody: { addressHex: "00000000" },
+    controls: [
+      { path: ["addressHex"], label: "Address (Hex)", type: "text" },
+    ],
   },
   {
     id: "cabinetCompressor",
@@ -382,8 +385,11 @@ export const MANUAL_TEST_COMMANDS = [
     risk: "hardware-write",
     focus: { area: "compressor" },
     description: "Turn cabinet compressor on or off.",
-    defaultBody: { on: true },
-    controls: [{ path: ["on"], label: "Power", type: "boolean" }],
+    defaultBody: { on: true, addressHex: "00000000" },
+    controls: [
+      { path: ["on"], label: "Power", type: "boolean" },
+      { path: ["addressHex"], label: "Address (Hex)", type: "text" },
+    ],
   },
   {
     id: "cabinetCompressorTemperatureRead",
@@ -395,8 +401,10 @@ export const MANUAL_TEST_COMMANDS = [
     risk: "read-via-serial",
     focus: { area: "compressor" },
     description: "Read configured compressor temperature.",
-    defaultBody: { read: true },
-    controls: [],
+    defaultBody: { read: true, addressHex: "00000000" },
+    controls: [
+      { path: ["addressHex"], label: "Address (Hex)", type: "text" },
+    ],
   },
   {
     id: "cabinetCompressorTemperatureSet",
@@ -408,8 +416,11 @@ export const MANUAL_TEST_COMMANDS = [
     risk: "hardware-write",
     focus: { area: "compressor" },
     description: "Set compressor target temperature in Celsius.",
-    defaultBody: { celsius: 8 },
-    controls: [{ path: ["celsius"], label: "Celsius", type: "number", min: 0, max: 255 }],
+    defaultBody: { celsius: 8, addressHex: "00000000" },
+    controls: [
+      { path: ["celsius"], label: "Celsius", type: "number", min: 0, max: 255 },
+      { path: ["addressHex"], label: "Address (Hex)", type: "text" },
+    ],
   },
   {
     id: "drugDispenser",
