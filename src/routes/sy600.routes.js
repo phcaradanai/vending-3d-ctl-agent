@@ -4,6 +4,7 @@ import {
   sy600CabinetCompressorController,
   sy600CabinetCompressorTemperatureController,
   sy600CabinetLightsController,
+  sy600CabinetStatusController,
   sy600ChannelDispenseController,
   sy600ConveyorController,
   sy600InfraredController,
@@ -141,11 +142,20 @@ sy600Router.post("/sy600/28/dispense", sy600ChannelDispenseController);
 sy600Router.post("/sy600/e0/ack", sy600AckE0Controller);
 
 // =============================================================================
-// POST /sy600/cabinet/lights  — เปิด/ปิดแสงในตู้ (เฟรมจับจากสนาม 0x43)
+// POST /sy600/cabinet/lights  — เปิด/ปิดไฟในตู้ (0x43: [lamp, state])
 // =============================================================================
-// Body: { "on": true|false, "addressHex"?: "AABBCCDD" }
+// Body: { "on": true|false, "lamp"?: 1|2 (default 1), "addressHex"?: "AABBCCDD" }
 // =============================================================================
 sy600Router.post("/sy600/cabinet/lights", sy600CabinetLightsController);
+
+// =============================================================================
+// GET/POST /sy600/cabinet/status  — สถานะอุปกรณ์ในตู้ทั้งหมด (0x44)
+// =============================================================================
+// ตอบ: lights1On, lights2On, glassHeaterOn, compressorCoolingOn,
+//      compressorHeatingOn, doorOpen, defrosting
+// =============================================================================
+sy600Router.get("/sy600/cabinet/status", sy600CabinetStatusController);
+sy600Router.post("/sy600/cabinet/status", sy600CabinetStatusController);
 
 // =============================================================================
 // POST /sy600/cabinet/compressor  — เปิด/ปิดคอมเพรสเซอร์ (เฟรมจับจากสนาม 0x4A)

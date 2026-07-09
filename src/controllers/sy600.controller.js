@@ -3,6 +3,7 @@ import {
   sy600CabinetCompressorControl,
   sy600CabinetCompressorTemperature,
   sy600CabinetLightsControl,
+  sy600CabinetStatus,
   sy600ChannelDispense,
   sy600ConveyorControl,
   sy600GetInfraredStatus,
@@ -100,13 +101,22 @@ export async function sy600AckE0Controller(req, res, next) {
 
 export async function sy600CabinetLightsController(req, res, next) {
   try {
-    const { on, addressHex } = parseBody(req);
+    const { on, lamp, addressHex } = parseBody(req);
     if (typeof on !== "boolean") {
       const error = new Error('Body must include boolean "on"');
       error.status = 400;
       throw error;
     }
-    return res.json(await sy600CabinetLightsControl({ on, addressHex }));
+    return res.json(await sy600CabinetLightsControl({ on, lamp, addressHex }));
+  } catch (error) {
+    return next(error);
+  }
+}
+
+export async function sy600CabinetStatusController(req, res, next) {
+  try {
+    const { addressHex } = parseBody(req);
+    return res.json(await sy600CabinetStatus({ addressHex }));
   } catch (error) {
     return next(error);
   }

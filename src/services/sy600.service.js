@@ -416,24 +416,69 @@ function decodeCommandResponse(frame) {
           resultText: b[8] === 0 ? "Success" : `Failed (code 0x${toHex(b[8] ?? 0)})`,
         },
       };
+    case 0x42:
     case 0x43:
       return {
         ...base,
         decoded: {
-          cabinet: "lights",
-          dataBytes: b,
-          hint: "Cabinet lighting (captured frame 0x43); payload vendor-specific.",
+          cabinet: frame.command === 0x42 ? "glass-heater" : "lights",
+          statusCode: b[0],
+          statusText: b[0] === 0 ? "Success" : "Failed",
         },
       };
-    case 0x4a:
+    case 0x44:
+      // ADM 3-door "query all device status": 7 bytes, each 0 = off / 1 = on.
       return {
         ...base,
         decoded: {
-          cabinet: "compressor-or-environment",
-          dataBytes: b,
-          hint: "Cabinet 0x4A (compressor / temperature / etc.); payload vendor-specific.",
+          cabinet: "device-status",
+          lights1On: b[0] === 1,
+          lights2On: b[1] === 1,
+          glassHeaterOn: b[2] === 1,
+          compressorCoolingOn: b[3] === 1,
+          compressorHeatingOn: b[4] === 1,
+          doorOpen: b[5] === 1,
+          defrosting: b[6] === 1,
         },
       };
+    case 0x4a: {
+      // ADM 3-door temperature-controller parameter ack (always 13 data bytes):
+      // [ status, cabinetTemp:int16, humidity:int16, evaporatorTemp:int16,
+      //   faultFlags:2B (E1..E8 then F1..F8, bitwise), paramAddr, paramValue, reserved:2B ]
+      // int16 values are big-endian in 0.1 units. Fault bits read E1 = MSB of byte 7.
+      const int16 = (hi, lo) => {
+        const v = ((hi ?? 0) << 8) | (lo ?? 0);
+        return (v & 0x8000 ? v - 0x10000 : v) / 10;
+      };
+      const faultsByte = b[7] ?? 0;
+      const faultNames = [
+        "cabinetNtcFault", // E1
+        "cabinetSensorFault", // E2 (e.g. AM2301 unreadable > 5 min)
+        "evaporatorNtcFault", // E3
+        "evaporatorNtcShort", // E4
+        "evaporatorNtcDisconnected", // E5
+        "cabinetNtcShort", // E6
+        "cabinetNtcDisconnected", // E7
+      ];
+      const sensorFaults = faultNames.filter((_, i) => (faultsByte >> (7 - i)) & 1);
+      return {
+        ...base,
+        decoded: {
+          cabinet: "temperature-controller",
+          statusCode: b[0],
+          statusText:
+            { 0: "Success", 1: "Failed", 2: "Parameter address out of range" }[b[0]] ??
+            "Unknown status",
+          cabinetTempCelsius: int16(b[1], b[2]),
+          humidityPercent: int16(b[3], b[4]),
+          evaporatorTempCelsius: int16(b[5], b[6]),
+          sensorFaults,
+          faultFlagBytes: [b[7] ?? 0, b[8] ?? 0],
+          paramAddress: b[9] ?? null,
+          paramValue: b[10] ?? null,
+        },
+      };
+    }
     case 0xe0: {
       const errorCode = b[8];
       return {
@@ -527,45 +572,54 @@ function buildSy600Result(frame, decoded, context = {}) {
       };
     case 0xe0:
       return { success: true, acknowledged: true };
+    case 0x42:
+      return {
+        success: decoded.statusCode === 0,
+        glassHeaterOn: context.requestedOn ?? null,
+      };
     case 0x43:
       return {
-        success: true,
+        success: decoded.statusCode === 0,
+        lamp: context.requestedLamp ?? null,
         lightsOn: context.requestedOn ?? null,
       };
+    case 0x44:
+      return {
+        success: true,
+        lights1On: decoded.lights1On,
+        lights2On: decoded.lights2On,
+        glassHeaterOn: decoded.glassHeaterOn,
+        compressorCoolingOn: decoded.compressorCoolingOn,
+        compressorHeatingOn: decoded.compressorHeatingOn,
+        doorOpen: decoded.doorOpen,
+        defrosting: decoded.defrosting,
+      };
     case 0x4a: {
-      const b = frame.dataBytes || [];
+      // Full ADM 3-door 0x4A ack (see decodeCommandResponse) — every 0x4A
+      // answer carries live cabinet telemetry plus the touched parameter.
+      const base = {
+        success: decoded.statusCode === 0,
+        statusText: decoded.statusText,
+        currentTempCelsius: decoded.cabinetTempCelsius,
+        humidityPercent: decoded.humidityPercent,
+        evaporatorTempCelsius: decoded.evaporatorTempCelsius,
+        sensorFaults: decoded.sensorFaults,
+      };
       if (context.cabinetKind === "compressor-power") {
-        return { success: true, compressorOn: context.requestedOn ?? null };
-      }
-      if (context.cabinetKind === "temperature-set") {
-        return { success: true, setpointCelsius: context.requestedCelsius ?? null };
-      }
-      if (context.cabinetKind === "temperature-read") {
-        // Field capture of the 13-byte read ack (deploy 10.8.0.44):
-        //   data = [0, 0, 55, 0,0,0,0,0,0,0, 4, 0, 0]
-        // Interpreted as current temperature = uint16 BE at data[1..2] in 0.1 °C
-        // (55 -> 5.5 °C) and set-point °C at data[10] (4 °C, typical 2..8 range).
-        // Heuristic — no vendor doc for this ack; on inverted-RX recovered frames
-        // any true byte >= 0x40 aliases into 0..63, so large readings can't be
-        // trusted until the RX wiring is fixed.
-        if (b.length >= 11) {
-          return {
-            success: true,
-            statusOn: null,
-            currentTempCelsius: ((b[1] << 8) | b[2]) / 10,
-            setpointCelsius: b[10],
-            note: "Heuristic decode of the 13-byte 0x4A read ack: currentTemp = data[1..2]/10 °C, set-point = data[10] °C. Confirm by changing the set-point and re-reading; on recovered frames values >= 0x40 alias into 0..63.",
-          };
-        }
-        // Short/legacy ack: mirror the captured set-frame offsets (°C at data[3]).
         return {
-          success: true,
-          statusOn: b.length > 0 ? b[0] === 1 : null,
-          setpointCelsius: b.length > 3 ? b[3] : null,
-          note: "Best-effort decode of short 0x4A read payload (offsets mirrored from the captured set frame); verify against vendor doc.",
+          ...base,
+          compressorOn:
+            decoded.paramAddress === 0x12 ? decoded.paramValue === 1 : context.requestedOn ?? null,
         };
       }
-      return { success: true };
+      // temperature-read / temperature-set: parameter 0x00 is the set-point °C.
+      return {
+        ...base,
+        setpointCelsius:
+          decoded.paramAddress === 0x00
+            ? decoded.paramValue
+            : context.requestedCelsius ?? null,
+      };
     }
     default:
       return { success: true };
@@ -819,70 +873,41 @@ export async function sy600AckE0({ addressHex }) {
   return payload;
 }
 
-// --- Cabinet extension (same EE01… wire format as SY600; captured hex from field / ZK vendor) ---
+// --- Cabinet extension (ADM 3-door power/cooling commands 0x42–0x4B, same EE01… wire format) ---
+//
+// Frame layouts per vendor doc (ADM-VENDIND-3DOOR.xlsx, sheet "คำสั่งการจัดการพลังงาน CoolingC"):
+//   0x43 lights:    data = [ lamp (1|2), state (0|1) ]
+//   0x44 status:    data = [] → ack 7 bytes: led1, led2, glass, cooling, heating, door, defrost
+//   0x4A temp ctrl: data = [ rw (0 read | 1 write), 0, paramAddr, paramValue, 0, 0 ]
+//     param 0x00 = set-point °C, param 0x12 = compressor-cooling enable (0|1);
+//     13-byte ack decoded in decodeCommandResponse.
 
-/** Captured TX templates (AABBCCDD = placeholder; patched from `SY600_DEVICE_ADDRESS_HEX` or `addressHex`). */
-const CABINET_LIGHTS_ON_TEMPLATE = "EE01AABBCCDD430002010192B4";
-const CABINET_LIGHTS_OFF_TEMPLATE = "EE01AABBCCDD43000201005374";
-const CABINET_COMPRESSOR_ON_TEMPLATE = "EE01AABBCCDD4A000601001201000000000243";
-const CABINET_COMPRESSOR_OFF_TEMPLATE = "EE01AABBCCDD4A000601001200000000006E43";
-const CABINET_COMP_TEMP_SET_TEMPLATE = "EE01AABBCCDD4A00060100001500004206";
-const CABINET_COMP_TEMP_READ_TEMPLATE = "EE01AABBCCDD4A00060000000000056E01";
+/** 0x4A parameter addresses (sheet "พารามิเตอร์ของตัวควบคุมอุณหภูมิ"). */
+const CABINET_PARAM_SETPOINT = 0x00;
+const CABINET_PARAM_COOLING_ENABLE = 0x12;
 
-/** Byte index in full frame where set-point °C is stored (template above, 21°C = 0x15). */
-const CABINET_COMP_TEMP_CELSIUS_BYTE_INDEX = 12;
-
-function normalizeHexLine(hex) {
-  return String(hex || "").replace(/\s+/g, "").toUpperCase();
+/** Build a cabinet frame with optional per-request device-address override (re-CRCs). */
+function buildCabinetFrame(command, dataBytes, addressHex) {
+  const frame = buildSy600Frame(command, dataBytes);
+  if (addressHex) {
+    const deviceAddress = parseDeviceAddressHex(addressHex);
+    deviceAddress.copy(frame, 2, 0, 4);
+    if (SY600_USE_CRC16) {
+      const crc = crc16Modbus(frame.subarray(0, frame.length - 2));
+      frame[frame.length - 2] = crc & 0xff;
+      frame[frame.length - 1] = (crc >> 8) & 0xff;
+    }
+  }
+  return frame;
 }
 
-/**
- * Patch bytes 2–5 (device address) and trailing Modbus CRC16 (LE) on a full captured frame.
- * When `SY600_USE_CRC16` is false, CRC bytes are forced to `00 00` (match `buildSy600Frame`).
- */
-function patchCapturedCabinetFrame(templateHex, { addressHex, bytePatches = [] } = {}) {
-  const h = normalizeHexLine(templateHex);
-  if (h.length % 2 !== 0) {
-    const error = new Error("Cabinet frame hex must have even length");
-    error.status = 400;
-    throw error;
-  }
-  const buf = Buffer.from(h, "hex");
-  if (buf.length < 11) {
-    const error = new Error("Cabinet frame too short");
-    error.status = 400;
-    throw error;
-  }
-  if (buf[0] !== SY600_START_TX || buf[1] !== SY600_VERSION) {
-    const error = new Error("Cabinet frame must start with EE 01");
-    error.status = 400;
-    throw error;
-  }
-  const addr = parseDeviceAddressHex(addressHex || SY600_DEVICE_ADDRESS_HEX);
-  addr.copy(buf, 2, 0, 4);
-  for (const p of bytePatches) {
-    ensureByte(p.value, `patch@${p.offset}`);
-    buf[p.offset] = p.value & 0xff;
-  }
-  const withoutCrc = buf.subarray(0, buf.length - 2);
-  if (SY600_USE_CRC16) {
-    const crc = crc16Modbus(withoutCrc);
-    buf[buf.length - 2] = crc & 0xff;
-    buf[buf.length - 1] = (crc >> 8) & 0xff;
-  } else {
-    buf[buf.length - 2] = 0;
-    buf[buf.length - 1] = 0;
-  }
-  return buf;
-}
-
-async function sendCabinetCapturedFrame(templateHex, queueLabel, patchOptions = {}, context = {}) {
-  const frame = patchCapturedCabinetFrame(templateHex, patchOptions);
+async function sendCabinetFrame(command, dataBytes, queueLabel, context = {}, addressHex) {
+  const frame = buildCabinetFrame(command, dataBytes, addressHex);
   const txHex = frame.toString("hex").toUpperCase();
-  // Cabinet board (lights / compressor / temperature) may sit on its own COM
-  // (`SERIAL_COMPRESSOR`, e.g. /dev/ttyS1); falls back to the vending port when unset.
+  // Cabinet board may sit on its own COM (`SERIAL_COMPRESSOR`); falls back to the
+  // vending port when unset — field capture shows it answers on the SY600 bus.
   const writeResult = await writeCompressorSerialData(txHex, queueLabel);
-  const { matched, asyncErrors } = resolveSy600Response(writeResult.responseHex, frame[6]);
+  const { matched, asyncErrors } = resolveSy600Response(writeResult.responseHex, command);
   const payload = finalizeSy600Response(matched, asyncErrors, txHex, context);
   logAgent.sy600({
     event: "sy600.cabinet.tx.complete",
@@ -895,35 +920,52 @@ async function sendCabinetCapturedFrame(templateHex, queueLabel, patchOptions = 
 }
 
 /**
- * Cabinet interior lighting (captured `0x43` frames on vending serial).
- * @param {{ on: boolean, addressHex?: string }} params
+ * Cabinet interior lighting — `0x43`, data `[lamp, state]`.
+ * @param {{ on: boolean, lamp?: number, addressHex?: string }} params
  */
-export async function sy600CabinetLightsControl({ on, addressHex }) {
-  const template = on ? CABINET_LIGHTS_ON_TEMPLATE : CABINET_LIGHTS_OFF_TEMPLATE;
-  return sendCabinetCapturedFrame(
-    template,
+export async function sy600CabinetLightsControl({ on, lamp, addressHex }) {
+  const lampNo = lamp === undefined || lamp === null ? 1 : lamp;
+  if (![1, 2].includes(lampNo)) {
+    const error = new Error('"lamp" must be 1 or 2');
+    error.status = 400;
+    throw error;
+  }
+  return sendCabinetFrame(
+    0x43,
+    [lampNo, on ? 1 : 0],
     `sy600-cabinet-lights-${on ? "on" : "off"}`,
-    { addressHex },
-    { cabinetKind: "lights", requestedOn: on }
+    { cabinetKind: "lights", requestedOn: on, requestedLamp: lampNo },
+    addressHex
   );
 }
 
 /**
- * Compressor power (captured `0x4A` frames).
+ * Query all cabinet device states — `0x44`, empty data. Ack: LED1 / LED2 /
+ * glass heater / compressor cooling / compressor heating / door / defrosting.
+ * @param {{ addressHex?: string }} [params]
+ */
+export async function sy600CabinetStatus({ addressHex } = {}) {
+  return sendCabinetFrame(0x44, [], "sy600-cabinet-status", { cabinetKind: "status" }, addressHex);
+}
+
+/**
+ * Compressor power — `0x4A` write parameter `0x12` (cooling enable) = 0|1.
  * @param {{ on: boolean, addressHex?: string }} params
  */
 export async function sy600CabinetCompressorControl({ on, addressHex }) {
-  const template = on ? CABINET_COMPRESSOR_ON_TEMPLATE : CABINET_COMPRESSOR_OFF_TEMPLATE;
-  return sendCabinetCapturedFrame(
-    template,
+  return sendCabinetFrame(
+    0x4a,
+    [1, 0, CABINET_PARAM_COOLING_ENABLE, on ? 1 : 0, 0, 0],
     `sy600-cabinet-compressor-${on ? "on" : "off"}`,
-    { addressHex },
-    { cabinetKind: "compressor-power", requestedOn: on }
+    { cabinetKind: "compressor-power", requestedOn: on },
+    addressHex
   );
 }
 
 /**
- * Compressor temperature set-point (°C) or read current set-point (captured `0x4A` frames).
+ * Temperature set-point — `0x4A` parameter `0x00`: read (`{ read: true }`) or
+ * write (`{ celsius: n }`). Every 0x4A ack also carries live cabinet
+ * temperature, humidity, evaporator temperature and sensor-fault flags.
  * @param {{ read?: boolean, celsius?: number, addressHex?: string }} params
  */
 export async function sy600CabinetCompressorTemperature({ read, celsius, addressHex }) {
@@ -933,11 +975,12 @@ export async function sy600CabinetCompressorTemperature({ read, celsius, address
       error.status = 400;
       throw error;
     }
-    return sendCabinetCapturedFrame(
-      CABINET_COMP_TEMP_READ_TEMPLATE,
+    return sendCabinetFrame(
+      0x4a,
+      [0, 0, CABINET_PARAM_SETPOINT, 0, 0, 0],
       "sy600-cabinet-compressor-temp-read",
-      { addressHex },
-      { cabinetKind: "temperature-read" }
+      { cabinetKind: "temperature-read" },
+      addressHex
     );
   }
   if (celsius === undefined || celsius === null) {
@@ -948,18 +991,16 @@ export async function sy600CabinetCompressorTemperature({ read, celsius, address
     throw error;
   }
   if (!Number.isInteger(celsius) || celsius < 0 || celsius > 255) {
-    const error = new Error("celsius must be integer 0..255 (typical set-point 10..40)");
+    const error = new Error("celsius must be integer 0..255 (typical set-point 2..8)");
     error.status = 400;
     throw error;
   }
-  return sendCabinetCapturedFrame(
-    CABINET_COMP_TEMP_SET_TEMPLATE,
+  return sendCabinetFrame(
+    0x4a,
+    [1, 0, CABINET_PARAM_SETPOINT, celsius, 0, 0],
     "sy600-cabinet-compressor-temp-set",
-    {
-      addressHex,
-      bytePatches: [{ offset: CABINET_COMP_TEMP_CELSIUS_BYTE_INDEX, value: celsius }],
-    },
-    { cabinetKind: "temperature-set", requestedCelsius: celsius }
+    { cabinetKind: "temperature-set", requestedCelsius: celsius },
+    addressHex
   );
 }
 

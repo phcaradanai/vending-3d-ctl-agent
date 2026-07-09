@@ -769,17 +769,18 @@ const swaggerSpec = {
     "/sy600/cabinet/lights": {
       post: {
         tags: ["SY600"],
-        summary: "Cabinet — เปิด/ปิดแสงในตู้ (0x43)",
+        summary: "Cabinet — เปิด/ปิดไฟในตู้ (0x43)",
         description: d(
-          "เฟรมจับจากสนาม — รูปแบบ `EE 01 …` เดียวกับ SY600",
-          "Patch ที่อยู่จาก `addressHex` หรือ `SY600_DEVICE_ADDRESS_HEX`; CRC ตาม `SY600_USE_CRC16`"
+          "เฟรมตาม vendor doc (ADM 3-door): data = `[lamp, state]`",
+          "`lamp`: 1 หรือ 2 (default 1), `state`: 0 ปิด / 1 เปิด",
+          "ที่อยู่จาก `addressHex` หรือ `SY600_DEVICE_ADDRESS_HEX`; CRC ตาม `SY600_USE_CRC16`"
         ),
         requestBody: {
           required: true,
           content: {
             "application/json": {
               schema: { $ref: "#/components/schemas/Sy600CabinetLightsRequest" },
-              example: { on: true },
+              example: { on: true, lamp: 1 },
             },
           },
         },
@@ -790,13 +791,43 @@ const swaggerSpec = {
         },
       },
     },
+    "/sy600/cabinet/status": {
+      get: {
+        tags: ["SY600"],
+        summary: "Cabinet — สถานะอุปกรณ์ทั้งหมด (0x44)",
+        description: d(
+          "Query all device status ตาม vendor doc — ตอบ 7 byte",
+          "`result`: `{ lights1On, lights2On, glassHeaterOn, compressorCoolingOn, compressorHeatingOn, doorOpen, defrosting }`"
+        ),
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+      post: {
+        tags: ["SY600"],
+        summary: "Cabinet — สถานะอุปกรณ์ทั้งหมด (0x44) — POST เทียบเท่า GET",
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: { type: "object", properties: { addressHex: { type: "string", example: "AABBCCDD" } } },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Command result", content: { "application/json": { schema: { $ref: "#/components/schemas/Sy600Response" } } } },
+          500: { description: "Serial failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
     "/sy600/cabinet/compressor": {
       post: {
         tags: ["SY600"],
-        summary: "Cabinet — เปิด/ปิดคอมเพรสเซอร์ (0x4A)",
+        summary: "Cabinet — เปิด/ปิดคอมเพรสเซอร์ (0x4A param 0x12)",
         description: d(
-          "เฟรมจับจากสนาม — คำสั่ง on/off แยกเทมเพลต",
-          "Patch ที่อยู่และ CRC เหมือน `/sy600/cabinet/lights`"
+          "เขียนพารามิเตอร์ `0x12` (เปิดใช้การทำความเย็น) = 0|1 ตาม vendor doc",
+          "ack มี telemetry ตู้ (temp/humidity/evaporator/faults) กลับมาด้วยใน `result`"
         ),
         requestBody: {
           required: true,
@@ -817,12 +848,15 @@ const swaggerSpec = {
     "/sy600/cabinet/compressor/temperature": {
       post: {
         tags: ["SY600"],
-        summary: "Cabinet — ตั้ง/อ่านจุดอุณหภูมิคอมเพรสเซอร์ (0x4A)",
+        summary: "Cabinet — ตั้ง/อ่านจุดอุณหภูมิ (0x4A param 0x00)",
         description: d(
-          "**อ่าน:** `{ \"read\": true }` — ส่งเทมเพลตอ่านค่าที่ตั้ง",
-          "**ตั้ง:** `{ \"celsius\": <0..255> }` — patch byte อุณหภูมิบนเทมเพลต (เช่น 21°C = 21)",
+          "**อ่าน:** `{ \"read\": true }` — อ่านพารามิเตอร์ `0x00` (set-point)",
+          "**ตั้ง:** `{ \"celsius\": <0..255> }` — เขียนพารามิเตอร์ `0x00` (ช่วงปกติ 2–8°C)",
           "",
-          "ไม่ส่ง `read` และ `celsius` พร้อมกัน"
+          "ไม่ส่ง `read` และ `celsius` พร้อมกัน",
+          "",
+          "`result` ตอบครบ: `currentTempCelsius` (อุณหภูมิตู้จริง, 0.1°C), `humidityPercent`,",
+          "`evaporatorTempCelsius`, `setpointCelsius`, `sensorFaults` — มาจาก ack 13 byte ตาม vendor doc"
         ),
         requestBody: {
           required: true,
@@ -1377,10 +1411,9 @@ const swaggerSpec = {
               "- `0x39` microswitch: `{ success, microswitchCount, switches: [{ index, blocked }] }`",
               "- `0x28` dispense: `{ success, orderId, resultCode, message }`",
               "- `0xE0` ack: `{ success, acknowledged }`",
-              "- cabinet lights: `{ success, lightsOn }`",
-              "- cabinet compressor: `{ success, compressorOn }`",
-              "- compressor temperature set: `{ success, setpointCelsius }`",
-              "- compressor temperature read: `{ success, statusOn, currentTempCelsius, setpointCelsius, note }` (heuristic decode ของ ack 13 byte: temp = data[1..2]/10 °C, set-point = data[10])",
+              "- cabinet lights: `{ success, lamp, lightsOn }`",
+              "- cabinet status (`0x44`): `{ success, lights1On, lights2On, glassHeaterOn, compressorCoolingOn, compressorHeatingOn, doorOpen, defrosting }`",
+              "- cabinet compressor / temperature (`0x4A`): `{ success, statusText, currentTempCelsius, humidityPercent, evaporatorTempCelsius, sensorFaults, compressorOn | setpointCelsius }` (ack 13 byte ตาม vendor doc)",
               "",
               "ฟิลด์เสริม: `recovered: true` เมื่อถอดรหัสผ่าน inverted-RX recovery, `warnings: [..]` เมื่อมี async error 0xE0 ปนมา"
             ),
@@ -1566,7 +1599,8 @@ const swaggerSpec = {
       Sy600CabinetLightsRequest: {
         type: "object",
         properties: {
-          on: { type: "boolean", description: "`true` = เปิดแสง, `false` = ปิด" },
+          on: { type: "boolean", description: "`true` = เปิดไฟ, `false` = ปิด" },
+          lamp: { type: "integer", enum: [1, 2], default: 1, description: "*(optional)* ไฟดวงที่ 1 หรือ 2" },
           addressHex: {
             type: "string",
             example: "AABBCCDD",

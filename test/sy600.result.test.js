@@ -56,33 +56,54 @@ test("microswitch 0x39 result: switches array with blocked booleans", () => {
   ]);
 });
 
-test("cabinet 0x4A temperature read: 13-byte field ack decodes temp + set-point", () => {
-  // Real recovered ack from deploy 10.8.0.44 (see rawHex 007FFEFEFED6FECAFE…)
+test("cabinet 0x4A temperature read: 13-byte field ack decodes telemetry + set-point", () => {
+  // Real recovered ack from deploy 10.8.0.44 (see rawHex 007FFEFEFED6FECAFE…):
+  // [status, temp:int16, humidity:int16, evapTemp:int16, faults:2B, paramAddr, paramValue, rsv:2B]
   const fieldAck = [0, 0, 55, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0];
   const payload = finalizeSy600Response(frame(0x4a, fieldAck), [], "EE01", {
     cabinetKind: "temperature-read",
   });
+  assert.equal(payload.success, true);
   assert.equal(payload.result.currentTempCelsius, 5.5);
+  assert.equal(payload.result.humidityPercent, 0);
+  assert.equal(payload.result.evaporatorTempCelsius, 0);
   assert.equal(payload.result.setpointCelsius, 4);
-  assert.equal(payload.result.statusOn, null);
-  assert.ok(payload.result.note);
+  assert.deepEqual(payload.result.sensorFaults, []);
 });
 
-test("cabinet 0x4A temperature read: short ack falls back to set-frame offsets", () => {
-  const payload = finalizeSy600Response(frame(0x4a, [0x01, 0x00, 0x00, 0x15, 0x00, 0x00]), [], "EE01", {
+test("cabinet 0x4A decodes negative temperature and fault bits", () => {
+  // temp = -3.5 °C (0xFFDD = -35 tenths), E1 (cabinet NTC fault) bit set
+  const ack = [0, 0xff, 0xdd, 0, 0, 0, 0, 0b10000000, 0, 0x00, 2, 0, 0];
+  const payload = finalizeSy600Response(frame(0x4a, ack), [], "EE01", {
     cabinetKind: "temperature-read",
   });
-  assert.equal(payload.result.statusOn, true);
-  assert.equal(payload.result.setpointCelsius, 21);
-  assert.ok(payload.result.note);
+  assert.equal(payload.result.currentTempCelsius, -3.5);
+  assert.deepEqual(payload.result.sensorFaults, ["cabinetNtcFault"]);
+  assert.equal(payload.result.setpointCelsius, 2);
 });
 
-test("cabinet 0x4A compressor power echoes requested state", () => {
-  const payload = finalizeSy600Response(frame(0x4a, []), [], "EE01", {
-    cabinetKind: "compressor-power",
-    requestedOn: false,
+test("cabinet 0x44 status decodes all device flags", () => {
+  // [led1, led2, glass, cooling, heating, door, defrost]
+  const payload = finalizeSy600Response(frame(0x44, [1, 0, 0, 1, 0, 0, 0]), [], "EE01", {
+    cabinetKind: "status",
   });
-  assert.deepEqual(payload.result, { success: true, compressorOn: false });
+  assert.equal(payload.result.lights1On, true);
+  assert.equal(payload.result.lights2On, false);
+  assert.equal(payload.result.compressorCoolingOn, true);
+  assert.equal(payload.result.compressorHeatingOn, false);
+  assert.equal(payload.result.doorOpen, false);
+  assert.equal(payload.result.defrosting, false);
+});
+
+test("cabinet 0x4A compressor power reads applied state from param 0x12 echo", () => {
+  const ack = [0, 0, 55, 0, 0, 0, 0, 0, 0, 0x12, 1, 0, 0];
+  const payload = finalizeSy600Response(frame(0x4a, ack), [], "EE01", {
+    cabinetKind: "compressor-power",
+    requestedOn: true,
+  });
+  assert.equal(payload.success, true);
+  assert.equal(payload.result.compressorOn, true);
+  assert.equal(payload.result.currentTempCelsius, 5.5);
 });
 
 test("recovered frame and async errors flagged in result", () => {
