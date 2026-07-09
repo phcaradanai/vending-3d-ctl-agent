@@ -541,14 +541,28 @@ function buildSy600Result(frame, decoded, context = {}) {
         return { success: true, setpointCelsius: context.requestedCelsius ?? null };
       }
       if (context.cabinetKind === "temperature-read") {
-        // Best-effort: in the captured 0x4A set frame the °C byte sits at data[3]
-        // and the power flag pattern at data[0]; the read-ack payload layout is
-        // not vendor-documented, so mirror those offsets and flag it as such.
+        // Field capture of the 13-byte read ack (deploy 10.8.0.44):
+        //   data = [0, 0, 55, 0,0,0,0,0,0,0, 4, 0, 0]
+        // Interpreted as current temperature = uint16 BE at data[1..2] in 0.1 °C
+        // (55 -> 5.5 °C) and set-point °C at data[10] (4 °C, typical 2..8 range).
+        // Heuristic — no vendor doc for this ack; on inverted-RX recovered frames
+        // any true byte >= 0x40 aliases into 0..63, so large readings can't be
+        // trusted until the RX wiring is fixed.
+        if (b.length >= 11) {
+          return {
+            success: true,
+            statusOn: null,
+            currentTempCelsius: ((b[1] << 8) | b[2]) / 10,
+            setpointCelsius: b[10],
+            note: "Heuristic decode of the 13-byte 0x4A read ack: currentTemp = data[1..2]/10 °C, set-point = data[10] °C. Confirm by changing the set-point and re-reading; on recovered frames values >= 0x40 alias into 0..63.",
+          };
+        }
+        // Short/legacy ack: mirror the captured set-frame offsets (°C at data[3]).
         return {
           success: true,
           statusOn: b.length > 0 ? b[0] === 1 : null,
           setpointCelsius: b.length > 3 ? b[3] : null,
-          note: "Best-effort decode of 0x4A read payload (offsets mirrored from the captured set frame); verify against vendor doc.",
+          note: "Best-effort decode of short 0x4A read payload (offsets mirrored from the captured set frame); verify against vendor doc.",
         };
       }
       return { success: true };

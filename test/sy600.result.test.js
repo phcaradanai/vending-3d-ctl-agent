@@ -56,7 +56,19 @@ test("microswitch 0x39 result: switches array with blocked booleans", () => {
   ]);
 });
 
-test("cabinet 0x4A temperature read: statusOn + setpointCelsius best effort", () => {
+test("cabinet 0x4A temperature read: 13-byte field ack decodes temp + set-point", () => {
+  // Real recovered ack from deploy 10.8.0.44 (see rawHex 007FFEFEFED6FECAFE…)
+  const fieldAck = [0, 0, 55, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0];
+  const payload = finalizeSy600Response(frame(0x4a, fieldAck), [], "EE01", {
+    cabinetKind: "temperature-read",
+  });
+  assert.equal(payload.result.currentTempCelsius, 5.5);
+  assert.equal(payload.result.setpointCelsius, 4);
+  assert.equal(payload.result.statusOn, null);
+  assert.ok(payload.result.note);
+});
+
+test("cabinet 0x4A temperature read: short ack falls back to set-frame offsets", () => {
   const payload = finalizeSy600Response(frame(0x4a, [0x01, 0x00, 0x00, 0x15, 0x00, 0x00]), [], "EE01", {
     cabinetKind: "temperature-read",
   });

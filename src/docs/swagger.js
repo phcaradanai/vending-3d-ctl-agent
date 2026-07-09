@@ -1380,7 +1380,7 @@ const swaggerSpec = {
               "- cabinet lights: `{ success, lightsOn }`",
               "- cabinet compressor: `{ success, compressorOn }`",
               "- compressor temperature set: `{ success, setpointCelsius }`",
-              "- compressor temperature read: `{ success, statusOn, setpointCelsius, note }` (best-effort decode)",
+              "- compressor temperature read: `{ success, statusOn, currentTempCelsius, setpointCelsius, note }` (heuristic decode ของ ack 13 byte: temp = data[1..2]/10 °C, set-point = data[10])",
               "",
               "ฟิลด์เสริม: `recovered: true` เมื่อถอดรหัสผ่าน inverted-RX recovery, `warnings: [..]` เมื่อมี async error 0xE0 ปนมา"
             ),
