@@ -28,3 +28,5 @@ services:
     #   - /dev/ttyUSB0:/dev/ttyUSB0
     #   - /dev/ttyUSB1:/dev/ttyUSB1
     #   - /dev/ttyUSB2:/dev/ttyUSB2
+    #   - /dev/ttyS0:/dev/ttyS0 # vending (SERIAL_VENDING)
+    #   - /dev/ttyS1:/dev/ttyS1 # compressor / cabinet board (SERIAL_COMPRESSOR)

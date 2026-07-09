@@ -22,7 +22,7 @@ docker run --rm -p 3303:3303 --env-file .env -v ./logs:/app/logs vending-3d-ctl:
 docker compose up -d --build
 ```
 
-Config: copy `.env.example` to `.env`. Key vars: `SERIAL_VENDING`, `SERIAL_NAVIGATION_LIGHTS`, `SERIAL_QR_NFC` (port paths, e.g. `COM6` on Windows or `/dev/ttyUSB0` on Linux) with matching `*_BAUD_RATE`; `SERIAL_WRITE_TIMEOUT_MS` (serial RX wait) and `SERIAL_API_TIMEOUT_MS` (HTTP socket timeout for the vending write route only — must be >= `SERIAL_WRITE_TIMEOUT_MS`).
+Config: copy `.env.example` to `.env`. Key vars: `SERIAL_VENDING`, `SERIAL_NAVIGATION_LIGHTS`, `SERIAL_QR_NFC` (port paths, e.g. `COM6` on Windows or `/dev/ttyUSB0` on Linux) with matching `*_BAUD_RATE`; optional `SERIAL_COMPRESSOR` (separate COM for the cabinet/compressor board — SY600 `0x43`/`0x4A` frames; empty = reuse the vending port); `SERIAL_WRITE_TIMEOUT_MS` (serial RX wait) and `SERIAL_API_TIMEOUT_MS` (HTTP socket timeout for the vending write route only — must be >= `SERIAL_WRITE_TIMEOUT_MS`).
 
 ## Architecture
 

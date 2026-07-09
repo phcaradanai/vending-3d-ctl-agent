@@ -207,6 +207,18 @@ export const SERIAL_QR_NFC_FRAME_IDLE_MS = Math.min(
   Math.max(10, toNumber(process.env.SERIAL_QR_NFC_FRAME_IDLE_MS, 80))
 );
 
+// --- Serial: compressor / cabinet board (lights, compressor, temperature — SY600 0x43/0x4A frames) ---
+/**
+ * Leave empty to send cabinet frames on the vending port (legacy single-port wiring).
+ * Set to a distinct device (e.g. `/dev/ttyS1`) when the cabinet board has its own COM.
+ */
+export const SERIAL_COMPRESSOR =
+  String(process.env.Serial_COMPRESSOR || process.env.SERIAL_COMPRESSOR || "").trim();
+export const SERIAL_COMPRESSOR_BAUD_RATE = toNumber(
+  process.env.SERIAL_COMPRESSOR_BAUD_RATE,
+  9600
+);
+
 // --- SY600 ---
 export const SY600_DEVICE_ADDRESS_HEX =
   process.env.SY600_DEVICE_ADDRESS_HEX || "AABBCCDD";

@@ -11,6 +11,8 @@ import {
   SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY,
   SERIAL_VENDING,
   SERIAL_VENDING_BAUD_RATE,
+  SERIAL_COMPRESSOR,
+  SERIAL_COMPRESSOR_BAUD_RATE,
   SERIAL_PORT_QUEUE_LOG,
   SERIAL_WRITE_DEBUG,
   SERIAL_WRITE_TIMEOUT_MS,
@@ -22,17 +24,22 @@ import { logAgent } from "../logger/logAgent.js";
 let vendingSerialPort;
 let navigationLightsSerialPort;
 let qrNfcSerialPort;
+let compressorSerialPort;
 let vendingReconnectTimer;
 let navigationReconnectTimer;
 let qrNfcReconnectTimer;
+let compressorReconnectTimer;
 let vendingLastError;
 let navigationLastError;
 let qrNfcLastError;
+let compressorLastError;
 let vendingLastConnectedAt;
 let navigationLastConnectedAt;
 let qrNfcLastConnectedAt;
+let compressorLastConnectedAt;
 let vendingLastWriteAt;
 let navigationLastWriteAt;
+let compressorLastWriteAt;
 let qrNfcFrameBuffer = Buffer.alloc(0);
 let qrNfcFrameTimer;
 let navigationFrameBuffer = Buffer.alloc(0);
@@ -328,6 +335,9 @@ function scheduleReconnect(channel, connectFn, timerRefName) {
   if (timerRefName === "qrNfc" && qrNfcReconnectTimer) {
     return;
   }
+  if (timerRefName === "compressor" && compressorReconnectTimer) {
+    return;
+  }
 
   // Keep reconnecting in background when cable/device is temporarily unavailable.
   const timer = setTimeout(async () => {
@@ -338,6 +348,8 @@ function scheduleReconnect(channel, connectFn, timerRefName) {
         vendingReconnectTimer = undefined;
       } else if (timerRefName === "navigation") {
         navigationReconnectTimer = undefined;
+      } else if (timerRefName === "compressor") {
+        compressorReconnectTimer = undefined;
       } else {
         qrNfcReconnectTimer = undefined;
       }
@@ -348,6 +360,8 @@ function scheduleReconnect(channel, connectFn, timerRefName) {
     vendingReconnectTimer = timer;
   } else if (timerRefName === "navigation") {
     navigationReconnectTimer = timer;
+  } else if (timerRefName === "compressor") {
+    compressorReconnectTimer = timer;
   } else {
     qrNfcReconnectTimer = timer;
   }
@@ -462,9 +476,50 @@ async function connectQrNfcPort() {
   }
 }
 
+/**
+ * Cabinet/compressor board has its own COM only when `SERIAL_COMPRESSOR` is set
+ * to a different device than vending — same path must reuse the vending port
+ * (opening the same tty twice would fail / steal each other's RX).
+ */
+export function isCompressorPortSeparate() {
+  return Boolean(SERIAL_COMPRESSOR) && SERIAL_COMPRESSOR !== SERIAL_VENDING;
+}
+
+async function connectCompressorPort() {
+  try {
+    compressorSerialPort = await getPort(
+      compressorSerialPort,
+      SERIAL_COMPRESSOR,
+      SERIAL_COMPRESSOR_BAUD_RATE
+    );
+
+    compressorSerialPort.removeAllListeners("data");
+    compressorSerialPort.removeAllListeners("close");
+    compressorSerialPort.removeAllListeners("error");
+
+    // RX is consumed per-request by writeToPort; no passive listener needed.
+    compressorSerialPort.on("close", () => {
+      scheduleReconnect("compressor", connectCompressorPort, "compressor");
+    });
+    compressorSerialPort.on("error", () => {
+      scheduleReconnect("compressor", connectCompressorPort, "compressor");
+    });
+    compressorLastError = undefined;
+    compressorLastConnectedAt = new Date().toISOString();
+  } catch (error) {
+    console.error(`[serial:compressor] open failed: ${error.message}`);
+    compressorLastError = error.message;
+    scheduleReconnect("compressor", connectCompressorPort, "compressor");
+  }
+}
+
 export async function initializeSerialListeners() {
   // Start listeners at app boot so inbound data is never missed.
-  await Promise.all([connectVendingPort(), connectNavigationLightsPort(), connectQrNfcPort()]);
+  const connections = [connectVendingPort(), connectNavigationLightsPort(), connectQrNfcPort()];
+  if (isCompressorPortSeparate()) {
+    connections.push(connectCompressorPort());
+  }
+  await Promise.all(connections);
 }
 
 async function writeToPort(port, data) {
@@ -615,6 +670,44 @@ export async function writeVendingSerialData(data, queueLabel = "vending-hex") {
   return result;
 }
 
+/**
+ * Middle-layer writer for the cabinet/compressor board: same write-and-wait
+ * semantics as `writeVendingSerialData`, but on `SERIAL_COMPRESSOR` when that
+ * is configured as a separate COM — otherwise it transparently falls back to
+ * the vending port so single-port machines keep working unchanged.
+ */
+export async function writeCompressorSerialData(data, queueLabel = "compressor-hex") {
+  if (!isCompressorPortSeparate()) {
+    return writeVendingSerialData(data, queueLabel);
+  }
+  compressorSerialPort = await getPort(
+    compressorSerialPort,
+    SERIAL_COMPRESSOR,
+    SERIAL_COMPRESSOR_BAUD_RATE
+  );
+  const result = await withPortWriteQueue(
+    compressorSerialPort,
+    queueLabel,
+    normalizeQueueTxHex(data),
+    () => writeToPort(compressorSerialPort, data)
+  );
+  compressorLastWriteAt = new Date().toISOString();
+
+  console.log(
+    `[serial:${compressorSerialPort.path}] writeCompressorSerialData result ->`,
+    JSON.stringify(result)
+  );
+  logAgent.serial({
+    event: "serial.compressor.write.done",
+    portPath: compressorSerialPort.path,
+    queueLabel,
+    txHexPrefix: normalizeQueueTxHex(data)?.slice(0, 256) ?? null,
+    responseHexPrefix: result.responseHex?.slice(0, 256) ?? null,
+    txBytes: result.bytes,
+  });
+  return result;
+}
+
 export async function writeNavigationLightsSerialData(data) {
   navigationLightsSerialPort = await getPort(
     navigationLightsSerialPort,
@@ -731,6 +824,11 @@ export function getSerialConfig() {
       baudRate: SERIAL_QR_NFC_BAUD_RATE,
       frameIdleMs: SERIAL_QR_NFC_FRAME_IDLE_MS,
     },
+    compressor: {
+      path: SERIAL_COMPRESSOR || null,
+      baudRate: SERIAL_COMPRESSOR_BAUD_RATE,
+      sharedWithVending: !isCompressorPortSeparate(),
+    },
     writeTimeoutMs: SERIAL_WRITE_TIMEOUT_MS,
   };
 }
@@ -816,11 +914,18 @@ export function getSerialWriteQueueSnapshot(ports = {}) {
   const vPath = pickPath(ports.vending);
   const nPath = pickPath(ports.navigationLights);
   const qPath = pickPath(ports.qrNfc);
+  const cPath = isCompressorPortSeparate()
+    ? pickPath(ports.compressor) || SERIAL_COMPRESSOR
+    : vPath;
 
   return {
     channels: {
       vending: peek(vPath),
       navigationLights: peek(nPath),
+      compressor: {
+        ...peek(cPath),
+        sharedWithVending: !isCompressorPortSeparate(),
+      },
       qrNfc: {
         queueKey: qPath,
         runningLabel: null,
@@ -875,6 +980,18 @@ export function getSerialHealthSnapshot() {
     navigationLights,
     qrNfc,
   };
+  if (isCompressorPortSeparate()) {
+    ports.compressor = buildPortHealth({
+      channel: "compressor",
+      configuredPath: SERIAL_COMPRESSOR,
+      configuredBaudRate: SERIAL_COMPRESSOR_BAUD_RATE,
+      portInstance: compressorSerialPort,
+      reconnectTimer: compressorReconnectTimer,
+      lastConnectedAt: compressorLastConnectedAt,
+      lastWriteAt: compressorLastWriteAt,
+      lastError: compressorLastError,
+    });
+  }
   const connectedPorts = Object.values(ports).filter((port) => port.serialReady).length;
   const totalPorts = Object.keys(ports).length;
 
