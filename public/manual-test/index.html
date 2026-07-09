@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Manual Test Console</title>
-    <link rel="stylesheet" href="/manual-test/styles.css" />
+    <link rel="stylesheet" href="/manual-test/styles.css?v=20260709-1410" />
   </head>
   <body>
     <header class="topbar">
@@ -55,16 +55,15 @@
 
     <main class="workspace">
       <aside class="rail" aria-label="Command list">
-        <div class="rail-section">
-          <h2>Commands</h2>
-          <div id="commandList" class="command-list"></div>
-        </div>
-        <div class="rail-section flow-section">
-          <h2>Flows</h2>
-          <select id="flowSelect"></select>
-          <button id="runFlowButton" class="button primary full" type="button">Run flow</button>
-          <div id="flowSteps" class="flow-steps"></div>
-        </div>
+        <div id="commandIcons" class="command-icons" role="list" aria-label="Commands"></div>
+        <details class="flows-drawer">
+          <summary>Flows</summary>
+          <div class="flows-body">
+            <select id="flowSelect"></select>
+            <button id="runFlowButton" class="button primary full" type="button">Run flow</button>
+            <div id="flowSteps" class="flow-steps"></div>
+          </div>
+        </details>
       </aside>
 
       <section class="machine-panel" aria-label="Machine focus panel">
@@ -76,22 +75,26 @@
           <span id="riskBadge" class="risk-badge">read</span>
         </div>
 
-        <div class="machine-shell">
-          <div class="machine-topline">
+        <div class="machine-shell machine-component">
+          <div class="machine-topline machine-component__topline">
             <div id="ledBar" class="led-bar" aria-label="Navigation light segments"></div>
           </div>
 
-          <div class="machine-body">
+          <div class="machine-body machine-component__body">
             <div class="lift-track" id="liftTrack">
               <span>Lift</span>
               <b id="liftTargetLabel">-</b>
             </div>
-            <div class="slot-bank">
+            <div class="slot-bank machine-component__slot-bank">
               <div class="slot-header">
-                <span>Layer</span>
-                <span>Channels 0-9</span>
+                <span id="slotHeaderLabel">Layer &times; channel</span>
+                <div class="grid-config" aria-label="Slot grid size">
+                  <label>R<input id="gridRowsInput" type="number" min="1" max="20" inputmode="numeric" /></label>
+                  <label>C<input id="gridColsInput" type="number" min="1" max="40" inputmode="numeric" /></label>
+                </div>
               </div>
-              <div id="slotGrid" class="slot-grid" aria-label="Slot grid"></div>
+              <p id="slotHint" class="slot-hint" hidden>Select a channel-dispense command to enable slot actions.</p>
+              <div id="slotGrid" class="slot-grid machine-component__slot-grid" aria-label="Slot grid"></div>
             </div>
             <div class="door-stack">
               <button class="door" data-door="1" type="button">Door 1</button>
@@ -111,41 +114,57 @@
         </div>
 
         <form id="controlForm" class="control-grid"></form>
-      </section>
 
-      <section class="io-panel" aria-label="Request and response">
-        <div class="tabs">
-          <button class="tab is-active" data-tab="request" type="button">Request</button>
-          <button class="tab" data-tab="response" type="button">Response</button>
-          <button class="tab" data-tab="history" type="button">History</button>
-        </div>
-
-        <div class="tab-panel is-active" id="requestTab">
+        <div class="action-bar">
           <div class="request-line">
             <code id="requestMethod">GET</code>
             <code id="requestUrl">/api/v1/health</code>
           </div>
-          <textarea id="bodyEditor" spellcheck="false"></textarea>
           <div class="action-row">
-            <button id="sendCommandButton" class="button primary" type="button">Send command</button>
             <button id="resetBodyButton" class="button secondary" type="button">Reset body</button>
+            <button id="sendCommandButton" class="button primary" type="button">Send command</button>
           </div>
-        </div>
-
-        <div class="tab-panel" id="responseTab">
-          <div class="response-meta" id="responseMeta">No response yet</div>
-          <pre id="responseOutput">{}</pre>
-        </div>
-
-        <div class="tab-panel" id="historyTab">
-          <div class="action-row">
-            <button id="clearHistoryButton" class="button secondary" type="button">Clear</button>
-          </div>
-          <div id="historyList" class="history-list"></div>
         </div>
       </section>
+
+      <aside class="io-rail" aria-label="Request, response and history toggle">
+        <button id="ioDrawerToggle" class="io-drawer-toggle" type="button" aria-expanded="false" aria-controls="ioDrawer">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z" /><path d="M4 10h16" /></svg>
+          <span id="ioDrawerStatus">Ready</span>
+        </button>
+      </aside>
     </main>
 
-    <script type="module" src="/manual-test/app.js"></script>
+    <aside id="ioDrawer" class="io-drawer" aria-hidden="true" aria-label="Request, response and history">
+      <div class="tabs">
+        <button class="tab is-active" data-tab="request" type="button">Request</button>
+        <button class="tab" data-tab="response" type="button">Response</button>
+        <button class="tab" data-tab="history" type="button">History</button>
+        <button id="ioDrawerClose" class="tab io-drawer-close" type="button" aria-label="Close">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+
+      <div class="tab-panel is-active" id="requestTab">
+        <textarea id="bodyEditor" spellcheck="false"></textarea>
+      </div>
+
+      <div class="tab-panel" id="responseTab">
+        <div class="response-meta" id="responseMeta">No response yet</div>
+        <pre id="responseOutput">{}</pre>
+      </div>
+
+      <div class="tab-panel" id="historyTab">
+        <div class="action-row">
+          <button id="clearHistoryButton" class="button secondary" type="button">Clear</button>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </div>
+    </aside>
+
+    <div id="commandTooltip" class="command-tooltip" role="tooltip" hidden></div>
+    <div id="slotPopover" class="slot-popover" popover="manual"></div>
+
+    <script type="module" src="/manual-test/app.js?v=20260709-1410"></script>
   </body>
 </html>
