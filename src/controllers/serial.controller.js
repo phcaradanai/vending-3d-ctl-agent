@@ -90,6 +90,12 @@ export async function healthController(_req, res) {
             ...serialConfig.qrNfc,
             ...serialPorts.qrNfc,
           },
+          // serialPorts.compressor exists only when SERIAL_COMPRESSOR is a separate COM;
+          // config alone still shows path/baud + sharedWithVending for the fallback case.
+          compressor: {
+            ...serialConfig.compressor,
+            ...(serialPorts.compressor || {}),
+          },
         },
         writeQueues: getSerialWriteQueueSnapshot(serialPorts),
       },
