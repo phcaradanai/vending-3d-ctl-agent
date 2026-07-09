@@ -58,6 +58,7 @@ async function runStep(steps, phase, meta, task) {
       phase,
       ...meta,
       success: true,
+      result: result.result ?? null,
       txHex: result.txHex,
       response: result.response,
     });

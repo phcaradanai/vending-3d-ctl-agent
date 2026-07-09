@@ -2,7 +2,7 @@ import {
   SY600_DEVICE_ADDRESS_HEX,
   SY600_USE_CRC16,
 } from "../config/env.js";
-import { writeVendingSerialData } from "./serial.service.js";
+import { writeCompressorSerialData, writeVendingSerialData } from "./serial.service.js";
 import { logAgent } from "../logger/logAgent.js";
 
 const SY600_START_TX = 0xee;
@@ -457,6 +457,133 @@ function decodeCommandResponse(frame) {
   }
 }
 
+const DOOR_STATE_TEXT = {
+  1: "opened",
+  2: "closed",
+  3: "open_failed",
+  4: "close_failed",
+};
+
+/**
+ * Build the flat, consumer-facing `result` object for one decoded frame.
+ *
+ * The nested `response.decoded` block keeps every raw detail (hex, byte
+ * arrays, codes) for debugging; `result` is the stable, self-describing shape
+ * API consumers can bind an interface to directly — e.g. a door command
+ * answers `{ doorNo, doorState }`, an infrared read answers `{ blocked }`.
+ * `context` carries request intent (requested on/off, set-point, sensor type)
+ * for commands whose ack payload doesn't echo it back.
+ */
+function buildSy600Result(frame, decoded, context = {}) {
+  switch (frame.command) {
+    case 0xc3:
+      return {
+        success: decoded.statusCode === 0,
+        position: decoded.position,
+      };
+    case 0xc4:
+      return {
+        success: decoded.resultCode === 0,
+        resultCode: decoded.resultCode,
+        message: decoded.resultText,
+        machineState: decoded.machineState,
+      };
+    case 0xc5:
+    case 0xc7:
+      return {
+        success: decoded.statusCode === 1 || decoded.statusCode === 2,
+        doorNo: decoded.doorNo,
+        doorState: DOOR_STATE_TEXT[decoded.statusCode] || "unknown",
+      };
+    case 0xc6:
+      return { success: decoded.statusCode === 0 };
+    case 0x24:
+      return {
+        success: decoded.statusCode === 0,
+        layers: decoded.layers,
+        outputDoors: decoded.outputDoors,
+      };
+    case 0x35:
+      return {
+        success: true,
+        sensorType: context.sensorType ?? null,
+        blocked: decoded.sensorStatusCode !== 0,
+      };
+    case 0x39:
+      return {
+        success: true,
+        microswitchCount: decoded.microswitchCount,
+        switches: (decoded.statusBytes || []).map((value, index) => ({
+          index: index + 1,
+          blocked: value !== 0,
+        })),
+      };
+    case 0x28:
+      return {
+        success: decoded.resultCode === 0,
+        orderId: decoded.orderIdHex,
+        resultCode: decoded.resultCode,
+        message: decoded.resultText,
+      };
+    case 0xe0:
+      return { success: true, acknowledged: true };
+    case 0x43:
+      return {
+        success: true,
+        lightsOn: context.requestedOn ?? null,
+      };
+    case 0x4a: {
+      const b = frame.dataBytes || [];
+      if (context.cabinetKind === "compressor-power") {
+        return { success: true, compressorOn: context.requestedOn ?? null };
+      }
+      if (context.cabinetKind === "temperature-set") {
+        return { success: true, setpointCelsius: context.requestedCelsius ?? null };
+      }
+      if (context.cabinetKind === "temperature-read") {
+        // Best-effort: in the captured 0x4A set frame the °C byte sits at data[3]
+        // and the power flag pattern at data[0]; the read-ack payload layout is
+        // not vendor-documented, so mirror those offsets and flag it as such.
+        return {
+          success: true,
+          statusOn: b.length > 0 ? b[0] === 1 : null,
+          setpointCelsius: b.length > 3 ? b[3] : null,
+          note: "Best-effort decode of 0x4A read payload (offsets mirrored from the captured set frame); verify against vendor doc.",
+        };
+      }
+      return { success: true };
+    }
+    default:
+      return { success: true };
+  }
+}
+
+/**
+ * Assemble the full HTTP payload for one answered SY600 command:
+ * `{ success, result, txHex, response }` — `result` is the flat semantic
+ * summary, `response` the detailed frame decode (kept for compatibility).
+ */
+export function finalizeSy600Response(matched, asyncErrors, txHex, context = {}) {
+  const response = decodeCommandResponse(matched);
+  response.asyncErrors = asyncErrors;
+  if (matched.recovered) {
+    response.recovered = true;
+    response.recoveryNote = matched.recoveryNote;
+  }
+  const result = buildSy600Result(matched, response.decoded, context);
+  if (matched.recovered) result.recovered = true;
+  const warnings = asyncErrors
+    .map((entry) => entry.decoded?.errorText)
+    .filter(Boolean);
+  if (warnings.length) result.warnings = warnings;
+  return {
+    success: result.success,
+    result,
+    txHex,
+    response,
+  };
+}
+
 function sy600DecodedSummary(decoded) {
   if (!decoded || typeof decoded !== "object") return null;
   return (
@@ -470,7 +597,7 @@ function sy600DecodedSummary(decoded) {
   );
 }
 
-async function sendSy600(command, dataBytes, labelSuffix = "") {
+async function sendSy600(command, dataBytes, labelSuffix = "", context = {}) {
   const frame = buildSy600Frame(command, dataBytes);
   const txHex = frame.toString("hex").toUpperCase();
   const queueLabel = labelSuffix
@@ -478,12 +605,7 @@ async function sendSy600(command, dataBytes, labelSuffix = "") {
     : `sy600-0x${toHex(command)}`;
   const writeResult = await writeVendingSerialData(txHex, queueLabel);
   const { matched, asyncErrors } = resolveSy600Response(writeResult.responseHex, command);
-  const response = decodeCommandResponse(matched);
-  response.asyncErrors = asyncErrors;
-  if (matched.recovered) {
-    response.recovered = true;
-    response.recoveryNote = matched.recoveryNote;
-  }
+  const payload = finalizeSy600Response(matched, asyncErrors, txHex, context);
   if (asyncErrors.length) {
     logAgent.sy600({
       event: "sy600.async.error",
@@ -497,13 +619,10 @@ async function sendSy600(command, dataBytes, labelSuffix = "") {
     command: `0x${toHex(command)}`,
     queueLabel,
     txHexPrefix: txHex.slice(0, 256),
-    responseHexPrefix: response.rawHex?.slice(0, 256) ?? null,
-    decodedSummary: sy600DecodedSummary(response.decoded),
+    responseHexPrefix: payload.response.rawHex?.slice(0, 256) ?? null,
+    decodedSummary: sy600DecodedSummary(payload.response.decoded),
   });
-  return {
-    txHex,
-    response,
-  };
+  return payload;
 }
 
 function ensureByte(value, field) {
@@ -583,10 +702,13 @@ export async function sy600MicroStepDispense({ layer, channelStart, channelEnd, 
     });
   }
 
+  const last = attempts[attempts.length - 1];
   return {
+    success: attempts.every((attempt) => attempt.success),
+    result: last.result,
     repeat: repeatCount,
     attempts,
-    last: attempts[attempts.length - 1],
+    last,
   };
 }
 
@@ -607,7 +729,7 @@ export async function sy600ResetScan({ resetDoor, resetLift }) {
 }
 
 export async function sy600GetInfraredStatus({ sensorType }) {
-  return sendSy600(0x35, [ensureByte(sensorType, "sensorType"), 0x00]);
+  return sendSy600(0x35, [ensureByte(sensorType, "sensorType"), 0x00], "", { sensorType });
 }
 
 export async function sy600GetMicroswitchStatus() {
@@ -634,12 +756,7 @@ export async function sy600ChannelDispense({ layerAddressHex, channelStart, chan
   const txHex = frame.toString("hex").toUpperCase();
   const writeResult = await writeVendingSerialData(txHex, "sy600-0x28");
   const { matched, asyncErrors } = resolveSy600Response(writeResult.responseHex, 0x28);
-  const response = decodeCommandResponse(matched);
-  response.asyncErrors = asyncErrors;
-  if (matched.recovered) {
-    response.recovered = true;
-    response.recoveryNote = matched.recoveryNote;
-  }
+  const payload = finalizeSy600Response(matched, asyncErrors, txHex);
   if (asyncErrors.length) {
     logAgent.sy600({
       event: "sy600.async.error",
@@ -653,13 +770,10 @@ export async function sy600ChannelDispense({ layerAddressHex, channelStart, chan
     command: "0x28",
     queueLabel: "sy600-0x28",
     txHexPrefix: txHex.slice(0, 256),
-    responseHexPrefix: response.rawHex?.slice(0, 256) ?? null,
-    decodedSummary: sy600DecodedSummary(response.decoded),
+    responseHexPrefix: payload.response.rawHex?.slice(0, 256) ?? null,
+    decodedSummary: sy600DecodedSummary(payload.response.decoded),
   });
-  return {
-    txHex,
-    response,
-  };
+  return payload;
 }
 
 export async function sy600AckE0({ addressHex }) {
@@ -679,24 +793,16 @@ export async function sy600AckE0({ addressHex }) {
   const txHex = frame.toString("hex").toUpperCase();
   const writeResult = await writeVendingSerialData(txHex, "sy600-0xE0");
   const { matched, asyncErrors } = resolveSy600Response(writeResult.responseHex, 0xe0);
-  const response = decodeCommandResponse(matched);
-  response.asyncErrors = asyncErrors;
-  if (matched.recovered) {
-    response.recovered = true;
-    response.recoveryNote = matched.recoveryNote;
-  }
+  const payload = finalizeSy600Response(matched, asyncErrors, txHex);
   logAgent.sy600({
     event: "sy600.tx.complete",
     command: "0xE0",
     queueLabel: "sy600-0xE0",
     txHexPrefix: txHex.slice(0, 256),
-    responseHexPrefix: response.rawHex?.slice(0, 256) ?? null,
-    decodedSummary: sy600DecodedSummary(response.decoded),
+    responseHexPrefix: payload.response.rawHex?.slice(0, 256) ?? null,
+    decodedSummary: sy600DecodedSummary(payload.response.decoded),
   });
-  return {
-    txHex,
-    response,
-  };
+  return payload;
 }
 
 // --- Cabinet extension (same EE01… wire format as SY600; captured hex from field / ZK vendor) ---
@@ -756,25 +862,22 @@ function patchCapturedCabinetFrame(templateHex, { addressHex, bytePatches = [] }
   return buf;
 }
 
-async function sendCabinetCapturedFrame(templateHex, queueLabel, patchOptions = {}) {
+async function sendCabinetCapturedFrame(templateHex, queueLabel, patchOptions = {}, context = {}) {
   const frame = patchCapturedCabinetFrame(templateHex, patchOptions);
   const txHex = frame.toString("hex").toUpperCase();
-  const writeResult = await writeVendingSerialData(txHex, queueLabel);
+  // Cabinet board (lights / compressor / temperature) may sit on its own COM
+  // (`SERIAL_COMPRESSOR`, e.g. /dev/ttyS1); falls back to the vending port when unset.
+  const writeResult = await writeCompressorSerialData(txHex, queueLabel);
   const { matched, asyncErrors } = resolveSy600Response(writeResult.responseHex, frame[6]);
-  const response = decodeCommandResponse(matched);
-  response.asyncErrors = asyncErrors;
-  if (matched.recovered) {
-    response.recovered = true;
-    response.recoveryNote = matched.recoveryNote;
-  }
+  const payload = finalizeSy600Response(matched, asyncErrors, txHex, context);
   logAgent.sy600({
     event: "sy600.cabinet.tx.complete",
     queueLabel,
     txHexPrefix: txHex.slice(0, 256),
-    responseHexPrefix: response.rawHex?.slice(0, 256) ?? null,
-    decodedSummary: sy600DecodedSummary(response.decoded),
+    responseHexPrefix: payload.response.rawHex?.slice(0, 256) ?? null,
+    decodedSummary: sy600DecodedSummary(payload.response.decoded),
   });
-  return { txHex, response };
+  return payload;
 }
 
 /**
@@ -783,9 +886,12 @@ async function sendCabinetCapturedFrame(templateHex, queueLabel, patchOptions = 
  */
 export async function sy600CabinetLightsControl({ on, addressHex }) {
   const template = on ? CABINET_LIGHTS_ON_TEMPLATE : CABINET_LIGHTS_OFF_TEMPLATE;
-  return sendCabinetCapturedFrame(template, `sy600-cabinet-lights-${on ? "on" : "off"}`, {
-    addressHex,
-  });
+  return sendCabinetCapturedFrame(
+    template,
+    `sy600-cabinet-lights-${on ? "on" : "off"}`,
+    { addressHex },
+    { cabinetKind: "lights", requestedOn: on }
+  );
 }
 
 /**
@@ -794,9 +900,12 @@ export async function sy600CabinetLightsControl({ on, addressHex }) {
  */
 export async function sy600CabinetCompressorControl({ on, addressHex }) {
   const template = on ? CABINET_COMPRESSOR_ON_TEMPLATE : CABINET_COMPRESSOR_OFF_TEMPLATE;
-  return sendCabinetCapturedFrame(template, `sy600-cabinet-compressor-${on ? "on" : "off"}`, {
-    addressHex,
-  });
+  return sendCabinetCapturedFrame(
+    template,
+    `sy600-cabinet-compressor-${on ? "on" : "off"}`,
+    { addressHex },
+    { cabinetKind: "compressor-power", requestedOn: on }
+  );
 }
 
 /**
@@ -813,7 +922,8 @@ export async function sy600CabinetCompressorTemperature({ read, celsius, address
     return sendCabinetCapturedFrame(
       CABINET_COMP_TEMP_READ_TEMPLATE,
       "sy600-cabinet-compressor-temp-read",
-      { addressHex }
+      { addressHex },
+      { cabinetKind: "temperature-read" }
     );
   }
   if (celsius === undefined || celsius === null) {
@@ -834,7 +944,8 @@ export async function sy600CabinetCompressorTemperature({ read, celsius, address
     {
       addressHex,
       bytePatches: [{ offset: CABINET_COMP_TEMP_CELSIUS_BYTE_INDEX, value: celsius }],
-    }
+    },
+    { cabinetKind: "temperature-set", requestedCelsius: celsius }
   );
 }
 

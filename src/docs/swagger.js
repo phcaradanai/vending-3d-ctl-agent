@@ -1064,6 +1064,11 @@ const swaggerSpec = {
               vending: { $ref: "#/components/schemas/SerialWriteQueueChannelSnapshot" },
               navigationLights: { $ref: "#/components/schemas/SerialWriteQueueChannelSnapshot" },
               qrNfc: { $ref: "#/components/schemas/SerialWriteQueueChannelSnapshot" },
+              compressor: {
+                allOf: [{ $ref: "#/components/schemas/SerialWriteQueueChannelSnapshot" }],
+                description:
+                  "คิวของ cabinet/compressor board — `sharedWithVending: true` เมื่อไม่ได้ตั้ง `SERIAL_COMPRESSOR` (ใช้พอร์ต vending ร่วมกัน)",
+              },
             },
           },
           activeQueueKeys: {
@@ -1121,6 +1126,11 @@ const swaggerSpec = {
                   vending: { $ref: "#/components/schemas/SerialChannelHealth" },
                   navigationLights: { $ref: "#/components/schemas/SerialChannelHealth" },
                   qrNfc: { $ref: "#/components/schemas/SerialChannelHealth" },
+                  compressor: {
+                    allOf: [{ $ref: "#/components/schemas/SerialChannelHealth" }],
+                    description:
+                      "ปรากฏเฉพาะเมื่อตั้ง `SERIAL_COMPRESSOR` เป็นพอร์ตแยกจาก vending (เช่น `/dev/ttyS1`)",
+                  },
                 },
               },
               writeQueues: { $ref: "#/components/schemas/SerialWriteQueuesSnapshot" },
@@ -1347,6 +1357,34 @@ const swaggerSpec = {
       Sy600Response: {
         type: "object",
         properties: {
+          success: {
+            type: "boolean",
+            example: true,
+            description: "สรุปว่าอุปกรณ์ตอบสำเร็จหรือไม่ (ตีความจาก status/result code ของคำสั่งนั้น)",
+          },
+          result: {
+            type: "object",
+            additionalProperties: true,
+            description: d(
+              "ผลลัพธ์แบบอ่านง่าย (flat) — ฟิลด์ต่างกันตามคำสั่ง ใช้ต่อเป็น interface ได้ทันที",
+              "",
+              "- `0xC3` lift: `{ success, position }`",
+              "- `0xC4` micro-step: `{ success, resultCode, message, machineState }`",
+              "- `0xC5`/`0xC7` door: `{ success, doorNo, doorState: \"opened\"|\"closed\"|\"open_failed\"|\"close_failed\" }`",
+              "- `0xC6` conveyor: `{ success }`",
+              "- `0x24` reset-scan: `{ success, layers, outputDoors }`",
+              "- `0x35` infrared: `{ success, sensorType, blocked }`",
+              "- `0x39` microswitch: `{ success, microswitchCount, switches: [{ index, blocked }] }`",
+              "- `0x28` dispense: `{ success, orderId, resultCode, message }`",
+              "- `0xE0` ack: `{ success, acknowledged }`",
+              "- cabinet lights: `{ success, lightsOn }`",
+              "- cabinet compressor: `{ success, compressorOn }`",
+              "- compressor temperature set: `{ success, setpointCelsius }`",
+              "- compressor temperature read: `{ success, statusOn, setpointCelsius, note }` (best-effort decode)",
+              "",
+              "ฟิลด์เสริม: `recovered: true` เมื่อถอดรหัสผ่าน inverted-RX recovery, `warnings: [..]` เมื่อมี async error 0xE0 ปนมา"
+            ),
+          },
           txHex: { type: "string", example: "EE01AABBCCDDC3000201000000" },
           response: {
             type: "object",
@@ -1370,7 +1408,7 @@ const swaggerSpec = {
             ),
           },
         },
-        required: ["txHex", "response"],
+        required: ["success", "result", "txHex", "response"],
       },
       Sy600C3Request: {
         type: "object",

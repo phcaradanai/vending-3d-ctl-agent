@@ -55,8 +55,11 @@ test("rejects buffers that are not the inverted-RX signature", () => {
   assert.equal(tryRecoverInvertedRx("FF01AABBCCDDC30002000155AA", 0xc3), null);
   // random garbage
   assert.equal(tryRecoverInvertedRx("0011223344556677889900", 0xc3), null);
-  // command mismatch: C3 capture but expecting C5
-  assert.equal(tryRecoverInvertedRx("007FFEFEFEF2FCF6FEFA2A6A00", 0xc5), null);
+  // command mismatch: C3 capture while expecting C5 — lenient recovery (ed37994)
+  // reconstructs the actual command from the low 6 bits instead of rejecting
+  const mismatched = tryRecoverInvertedRx("007FFEFEFEF2FCF6FEFA2A6A00", 0xc5);
+  assert.ok(mismatched);
+  assert.equal(mismatched.command, 0xc3);
   // too short
   assert.equal(tryRecoverInvertedRx("007FFE00", 0xc3), null);
 });
