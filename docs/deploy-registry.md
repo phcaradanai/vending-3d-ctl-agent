@@ -38,7 +38,7 @@ docker push "$REGISTRY:$VERSION"
 
 dir Dockerfile
 
-set VERSION=1.0.0
+set VERSION=1.0.1
 set REGISTRY=registry.rd.ns.co.th/chularat3inter/vending-3d-ctl
 
 docker build --no-cache --build-arg APP_VERSION=%VERSION% -t %REGISTRY%:latest -t %REGISTRY%:%VERSION% .
@@ -103,3 +103,31 @@ channel=0-2 → correctly fired human floor 1, channel 1-3).
 that endpoint still takes `layer`/`channelStart`/`channelEnd` exactly as
 sent, 0-indexed. Subtract 1 yourself from the human floor/channel number,
 or use `/vending/drugDispenser` once this image is deployed.
+
+### 2026-07-09 — RX corruption cracked: inverted line, 6-bit software recovery shipped
+
+The "wire-level RX corruption" above is now fully characterized. Analysis of 15
+captured TX/RX pairs from `events-serial.log` shows the RX line polarity is
+**inverted** (A/B pair swap or TTL/RS232 polarity mismatch on the RX side of the
+adapter — TX side is wired correctly, which is why commands execute). The
+receiver locks 3 bit-times early on the inverted stream, producing a stable
+per-byte transform:
+
+```text
+observed = ((~X & 0x3F) << 2) | 0b10        # X = true byte; bits 6-7 lost
+```
+
+Verified exact across commands 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0x35, 0x39 —
+command byte, status/result codes, lift positions, and microswitch bitmaps all
+recover correctly (vendor codes are < 0x40, so the 2 lost top bits don't matter
+for decisions; lift pickup positions 0x55-0x57 alias to 0x15-0x17, compare with
+`& 0x3F`; CRC is unverifiable in this mode).
+
+`sy600.service.js` now auto-recovers these frames (`tryRecoverInvertedRx`) when
+normal parsing fails: responses carry `recovered: true` + `recoveryNote`, and a
+`sy600.rx.recovered` event is logged. Covered by `test/sy600.recovery.test.js`
+using the real captured hex.
+
+**The hardware fix is still the right fix** — swap/rewire the RX pair on the
+serial adapter at the machine; recovery then becomes dead code that never
+triggers (it only activates on the exact corruption signature).
