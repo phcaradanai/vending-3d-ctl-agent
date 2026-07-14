@@ -1,0 +1,165 @@
+version: "3.9"
+
+networks:
+  vending_net:
+    driver: bridge
+services:
+  logger-monitor:
+      image: registry.rd.ns.co.th/httpd:latest
+      networks:
+        - vending_net
+      environment:
+        TZ: "Asia/Bangkok"
+      ports:
+        - "6810:80"  
+      volumes:
+        - /opt/docker/vending:/usr/local/apache2/htdocs 
+      restart: always
+      
+  vending-3d-ctl:
+    image: registry.rd.ns.co.th/chularat3inter/vending-3d-ctl:latest
+    # pull_policy: always
+    container_name: vending-3d-ctl
+    restart: unless-stopped
+    networks:
+      - vending_net
+    ports:
+      - "6811:3303"
+    volumes:
+      - /opt/docker/vending/vending-3d-ctl/logs:/app/logs
+    privileged: true
+    devices:
+      - /dev/ttyS0:/dev/ttyS0 # vending
+      - /dev/ttyS1:/dev/ttyS1 # composesser
+      - /dev/ttyS2:/dev/ttyS2 
+      - /dev/ttyS3:/dev/ttyS3
+      - /dev/ttyUSB0:/dev/ttyUSB0 # LED
+      - /dev/ttyUSB1:/dev/ttyUSB1 # QR
+      # - /dev/ttyS0:/dev/ttyS0
+      # - /dev/ttyS1:/dev/ttyS1 
+      # - /dev/ttyS2:/dev/ttyS2
+      # - /dev/ttyS3:/dev/ttyS3
+      # - /dev/ttyS4:/dev/ttyS4 # vending
+      # - /dev/ttyS5:/dev/ttyS5 # composesser
+      
+    environment:
+      # --- HTTP ---
+      PORT: 3303
+
+      # --- API Security ---
+      API_BEARER_TOKEN: "${API_BEARER_TOKEN}"
+      API_BEARER_REQUIRED: "true"
+
+      # --- Identity ---
+      CUSTOMER_CODE: "wnyh"
+      VENDING_CODE: "FFFFFF12"
+      DOOR_TYPE_STANDBY: "[1,2,3]"
+      DOOR_TYPE_NOW: "[1,2,3]"
+
+      # --- Timezone & Logs ---
+      APP_TIMEZONE: "Asia/Bangkok"
+      API_LOG_RETENTION_DAYS: "30"
+
+      # --- JSON log agent ---
+      APP_LOG_AGENT_ENABLED: "true"
+      APP_LOG_RETENTION_DAYS: "30"
+      APP_LOG_CHUNK_SIZE: "32M"
+      APP_LOG_ROTATED_MAX_TOTAL: "1G"
+      APP_LOG_COMPRESS_ROTATED: "false"
+
+      # --- Log view API ---
+      APP_LOG_VIEW_API_ENABLED: "false"
+
+      # --- Serial: vending ---
+      SERIAL_VENDING: "/dev/ttyS0"
+      SERIAL_VENDING_BAUD_RATE: "9600"
+      # SERIAL_COMPRESSOR: "/dev/ttyS1"
+      # SERIAL_COMPRESSOR_BAUD_RATE: "9600"
+
+      # --- Serial: navigation lights ---
+      SERIAL_NAVIGATION_LIGHTS: "/dev/ttyUSB1"
+      SERIAL_NAVIGATION_LIGHTS_BAUD_RATE: "115200"
+
+      # --- Serial: QR NFC ---
+      SERIAL_QR_NFC: "/dev/ttyUSB0"
+      SERIAL_QR_NFC_BAUD_RATE: "115200"
+      SERIAL_QR_NFC_FRAME_IDLE_MS: "80"
+
+      # --- SY600 ---
+      SY600_DEVICE_ADDRESS_HEX: "AABBCCDD"
+      SY600_USE_CRC16: "true"
+    
+      # --- Serial policy ---
+      SERIAL_WRITE_TIMEOUT_MS: "40000"
+      SERIAL_API_TIMEOUT_MS: "42000"
+      SERIAL_WRITE_DEBUG: "false"
+      SERIAL_PORT_QUEUE_LOG: "true"
+      SERIAL_NAVIGATION_LIGHTS_FRAME_DEBUG: "false"
+      SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY: "2"
+      SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS: "250"
+
+      # --- MQTT ---
+      MQTT_ENABLED: "true"
+      MQTT_BROKER_URL: "mqtt://rd.ns.co.th:1883"
+      MQTT_CLIENT_ID: "vending-3d-ctl"
+      MQTT_USERNAME: ""
+      MQTT_PASSWORD: ""
+      MQTT_QRNFC_TOPIC: "hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader"
+      MQTT_QRNFC_QOS: "0"
+      MQTT_QRNFC_RETAIN: "false"
+      MQTT_QRNFC_MIFARE_SIGNATURE: "02,FF,01,09,00|02,01,01,09,00"
+      MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX: "([0-9a-f\\-]{36})_(\\d{8})_(\\d+)_(\\d+)_(IN|OUT)_(\\d{14})"
+
+
+
+      
+  # vending-agent-worker:
+  #   image: registry.rd.ns.co.th/vending/vending-agent-worker:latest  
+  #   container_name: vending-agent-wokers
+  #   networks:
+  #   - vending_net
+  #   ports:
+  #     - "6812:3000"
+  #   environment:
+  #     - PORT=3000
+  #     # Bearer token — renew here when you need a new token, then restart the server.
+  #     - API_TOKEN=${API_TOKEN}
+  #     - DOOR_DROP_OUT_INDEX=[85,86,87]
+  #     - DOOR=2
+  #     - INFRARRED_SENSOR_POSITION_PLATFORM=[1,4,6]
+  #     - INFRARRED_SENSOR_POSITION_ANTI_PINCH=[2,5,7]
+  #     - VENDING_CODE=FFFFFF12
+  #     # - VENDING_CTL_API_URL=http://10.8.0.19:3303/api/v1
+  #     - VENDING_CTL_API_URL=http://vending-3d-ctl:3303/api/v1
+  #     - VENDING_CTL_API_TOKEN=${VENDING_CTL_API_TOKEN}
+  #   volumes:
+  #     - /opt/docker/vending/vending-agent-worker/logs:/app/logs
+  #     # - ./.env:/app/.env:ro
+  #   restart: unless-stopped
+
+
+  # ble-scanner:
+  #   image: registry.rd.ns.co.th/vending/ble-scanner-python:latest
+  #   container_name: ble-scanner-python
+  #   # network_mode: host
+  #   networks:
+  #     - vending_net
+  #   ports:
+  #     - "6813:3569"
+  #   privileged: true
+  #   volumes:
+  #     - /run/dbus:/run/dbus
+  #   environment:
+  #     - TZ=Asia/Bangkok
+  #     - PYTHON_MQTT_BROKER=rd.ns.co.th
+  #     - PYTHON_MQTT_PORT=1883
+  #     - PYTHON_MQTT_USERNAME=
+  #     - PYTHON_MQTT_PASSWORD=
+  #     - PYTHON_MQTT_KEEPALIVE=80
+  #     - PYTHON_DEVICE_CODE=FFFFFF12
+  #     - PYTHON_MQTT_TOPIC_DOORS=beacons/scaner/doorSensor/FFFFFF12
+  #     - PYTHON_MQTT_TOPIC_TEMP=beacons/scaner/tempSensor/FFFFFF12
+  #     - PYTHON_PORT=3569
+  #     - PYTHON_ENABLE_BLE=true
+  #     - PYTHON_CORS_ORIGINS=*
+  #   restart: unless-stopped
