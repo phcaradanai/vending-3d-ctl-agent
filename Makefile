@@ -7,10 +7,10 @@ start:
 	npm start
 
 run:
-	node apps.js
+	node index.js
 
 check:
-	node --check apps.js
+	node --check index.js
 	node --check src/app.js
 	node --check src/config/env.js
 	node --check src/controllers/serial.controller.js
