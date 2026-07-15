@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Manual Test Console</title>
+    <link rel="stylesheet" href="/manual-test/styles.css?v=20260709-1410" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="kicker">vending-3d-ctl-agent</p>
+        <h1>Manual Test Console</h1>
+      </div>
+      <div class="connection-strip" aria-label="Connection settings">
+        <label class="field compact">
+          <span>Base URL</span>
+          <input id="baseUrlInput" type="url" spellcheck="false" />
+        </label>
+        <label class="field compact token-field">
+          <span>Bearer token</span>
+          <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <button id="refreshHealthButton" class="button secondary" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <section class="status-band" aria-label="Status overview">
+      <div class="status-item" id="systemStatus">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>System</span>
+        <strong>unknown</strong>
+      </div>
+      <div class="status-item" id="vendingStatus">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>Vending</span>
+        <strong>unknown</strong>
+      </div>
+      <div class="status-item" id="navigationStatus">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>Navigation lights</span>
+        <strong>unknown</strong>
+      </div>
+      <div class="status-item" id="qrStatus">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>QR/NFC</span>
+        <strong>unknown</strong>
+      </div>
+      <div class="status-item" id="mqttStatus">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>MQTT</span>
+        <strong>unknown</strong>
+      </div>
+    </section>
+
+    <main class="workspace">
+      <aside class="rail" aria-label="Command list">
+        <div id="commandIcons" class="command-icons" role="list" aria-label="Commands"></div>
+        <details class="flows-drawer">
+          <summary>Flows</summary>
+          <div class="flows-body">
+            <select id="flowSelect"></select>
+            <button id="runFlowButton" class="button primary full" type="button">Run flow</button>
+            <div id="flowSteps" class="flow-steps"></div>
+          </div>
+        </details>
+      </aside>
+
+      <section class="machine-panel" aria-label="Machine focus panel">
+        <div class="panel-heading">
+          <div>
+            <p class="kicker">Focus</p>
+            <h2 id="activeCommandTitle">Loading</h2>
+          </div>
+          <span id="riskBadge" class="risk-badge">read</span>
+        </div>
+
+        <div class="machine-shell machine-component">
+          <div class="machine-topline machine-component__topline">
+            <div id="ledBar" class="led-bar" aria-label="Navigation light segments"></div>
+          </div>
+
+          <div class="machine-body machine-component__body">
+            <div class="lift-track" id="liftTrack">
+              <span>Lift</span>
+              <b id="liftTargetLabel">-</b>
+            </div>
+            <div class="slot-bank machine-component__slot-bank">
+              <div class="slot-header">
+                <span id="slotHeaderLabel">Layer &times; channel</span>
+                <div class="grid-config" aria-label="Slot grid size">
+                  <label>R<input id="gridRowsInput" type="number" min="1" max="20" inputmode="numeric" /></label>
+                  <label>C<input id="gridColsInput" type="number" min="1" max="40" inputmode="numeric" /></label>
+                </div>
+              </div>
+              <p id="slotHint" class="slot-hint" hidden>Select a channel-dispense command to enable slot actions.</p>
+              <div id="slotGrid" class="slot-grid machine-component__slot-grid" aria-label="Slot grid"></div>
+            </div>
+            <div class="door-stack">
+              <button class="door" data-door="1" type="button">Door 1</button>
+              <button class="door" data-door="2" type="button">Door 2</button>
+              <button class="door" data-door="3" type="button">Door 3</button>
+              <div class="subsystem" id="sensorFocus">Sensors</div>
+              <div class="subsystem" id="cabinetLightFocus">Cabinet light</div>
+              <div class="subsystem" id="compressorFocus">Compressor</div>
+            </div>
+          </div>
+
+          <div class="queue-strip" id="queueStrip">
+            <span>Queue</span>
+            <strong>waiting: -</strong>
+            <strong>running: -</strong>
+          </div>
+        </div>
+
+        <form id="controlForm" class="control-grid"></form>
+
+        <div class="action-bar">
+          <div class="request-line">
+            <code id="requestMethod">GET</code>
+            <code id="requestUrl">/api/v1/health</code>
+          </div>
+          <div class="action-row">
+            <button id="resetBodyButton" class="button secondary" type="button">Reset body</button>
+            <button id="sendCommandButton" class="button primary" type="button">Send command</button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="io-rail" aria-label="Request, response and history toggle">
+        <button id="ioDrawerToggle" class="io-drawer-toggle" type="button" aria-expanded="false" aria-controls="ioDrawer">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z" /><path d="M4 10h16" /></svg>
+          <span id="ioDrawerStatus">Ready</span>
+        </button>
+      </aside>
+    </main>
+
+    <aside id="ioDrawer" class="io-drawer" aria-hidden="true" aria-label="Request, response and history">
+      <div class="tabs">
+        <button class="tab is-active" data-tab="request" type="button">Request</button>
+        <button class="tab" data-tab="response" type="button">Response</button>
+        <button class="tab" data-tab="history" type="button">History</button>
+        <button id="ioDrawerClose" class="tab io-drawer-close" type="button" aria-label="Close">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+
+      <div class="tab-panel is-active" id="requestTab">
+        <textarea id="bodyEditor" spellcheck="false"></textarea>
+      </div>
+
+      <div class="tab-panel" id="responseTab">
+        <div class="response-meta" id="responseMeta">No response yet</div>
+        <pre id="responseOutput">{}</pre>
+      </div>
+
+      <div class="tab-panel" id="historyTab">
+        <div class="action-row">
+          <button id="clearHistoryButton" class="button secondary" type="button">Clear</button>
+        </div>
+        <div id="historyList" class="history-list"></div>
+      </div>
+    </aside>
+
+    <div id="commandTooltip" class="command-tooltip" role="tooltip" hidden></div>
+    <div id="slotPopover" class="slot-popover" popover="manual"></div>
+
+    <script type="module" src="/manual-test/app.js?v=20260709-1410"></script>
+  </body>
+</html>
