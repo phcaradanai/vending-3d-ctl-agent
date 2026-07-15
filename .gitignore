@@ -4,3 +4,11 @@ logs/
 
 # Claude code backup files — never commit
 .claude/CLAUDE.md.backup.*
+
+# Build artifacts
+build/innosetup.exe
+build/node-runtime.zip
+build/node-extract/
+
+# Distribution output
+dist/
