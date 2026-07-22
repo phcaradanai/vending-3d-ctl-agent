@@ -30,7 +30,7 @@ services:
     privileged: true
     devices:
       - /dev/ttyS0:/dev/ttyS0 # vending
-      - /dev/ttyS1:/dev/ttyS1 # composesser
+      - /dev/ttyS1:/dev/ttyS1 # sticker camera / QR reader
       - /dev/ttyS2:/dev/ttyS2 
       - /dev/ttyS3:/dev/ttyS3
       - /dev/ttyUSB0:/dev/ttyUSB0 # LED
@@ -52,7 +52,9 @@ services:
 
       # --- Identity ---
       CUSTOMER_CODE: "wnyh"
-      VENDING_CODE: "FFFFFF12"
+      VENDING_CODE: "${VENDING_CODE:-00010001}"
+      # Immutable kiosk code used in every scanner event sent to Core.
+      KIOSK_CODE: "${KIOSK_CODE:-00010001}"
       DOOR_TYPE_STANDBY: "[1,2,3]"
       DOOR_TYPE_NOW: "[1,2,3]"
 
@@ -80,9 +82,9 @@ services:
       SERIAL_NAVIGATION_LIGHTS: "/dev/ttyUSB1"
       SERIAL_NAVIGATION_LIGHTS_BAUD_RATE: "115200"
 
-      # --- Serial: QR NFC ---
-      SERIAL_QR_NFC: "/dev/ttyUSB0"
-      SERIAL_QR_NFC_BAUD_RATE: "115200"
+      # --- Serial: QR NFC / sticker camera ---
+      SERIAL_QR_NFC: "/dev/ttyS1"
+      SERIAL_QR_NFC_BAUD_RATE: "9600"
       SERIAL_QR_NFC_FRAME_IDLE_MS: "80"
 
       # --- SY600 ---
@@ -109,6 +111,14 @@ services:
       MQTT_QRNFC_RETAIN: "false"
       MQTT_QRNFC_MIFARE_SIGNATURE: "02,FF,01,09,00|02,01,01,09,00"
       MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX: "([0-9a-f\\-]{36})_(\\d{8})_(\\d+)_(\\d+)_(IN|OUT)_(\\d{14})"
+
+      # --- NATS JetStream (Core scanner event path) ---
+      # Set NATS_ENABLED=true and NATS_URL=nats://<core-host>:4222 on the
+      # hardware PC. The default keeps local development safe/offline.
+      NATS_ENABLED: "${NATS_ENABLED:-false}"
+      NATS_URL: "${NATS_URL:-nats://127.0.0.1:4222}"
+      NATS_SCANNER_SUBJECT: "medisync.scanner.read"
+      NATS_SCANNER_STREAM: "MEDISYNC"
 
 
 

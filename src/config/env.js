@@ -119,6 +119,9 @@ export const API_BEARER_REQUIRED = toBoolean(process.env.API_BEARER_REQUIRED, fa
 // --- Identity (used in MQTT topic template `${CUSTOMER_CODE}` / `${VENDING_CODE}`) ---
 export const CUSTOMER_CODE = String(process.env.CUSTOMER_CODE || "wnyh").trim() || "wnyh";
 export const VENDING_CODE = String(process.env.VENDING_CODE || "FFFFFFFF").trim() || "FFFFFFFF";
+// Immutable cabinet identity used for Core routing. Keep this as the canonical
+// code (not a database id); VENDING_CODE remains a backwards-compatible alias.
+export const KIOSK_CODE = String(process.env.KIOSK_CODE || VENDING_CODE).trim() || VENDING_CODE;
 export const DOOR_TYPE_STANDBY = toNumberArray(process.env.DOOR_TYPE_STANDBY, [1, 2, 3]);
 export const DOOR_TYPE_NOW = toNumberArray(process.env.DOOR_TYPE_NOW, [1, 2, 3]);
 
@@ -289,6 +292,19 @@ export const MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX = toRegex(
     "([0-9a-f\\-]{36})_(\\d{8})_(\\d+)_(\\d+)_(IN|OUT)_(\\d{14})",
   /([0-9a-f\-]{36})_(\d{8})_(\d+)_(\d+)_(IN|OUT)_(\d{14})/i
 );
+
+// --- NATS JetStream (unified QR / barcode / NFC events to Core) ---
+export const NATS_ENABLED = toBoolean(process.env.NATS_ENABLED, false);
+export const NATS_URL = String(process.env.NATS_URL || "nats://127.0.0.1:4222").trim();
+export const NATS_CLIENT_NAME = String(
+  process.env.NATS_CLIENT_NAME || `vending-${KIOSK_CODE}`
+).trim();
+export const NATS_SCANNER_SUBJECT = String(
+  process.env.NATS_SCANNER_SUBJECT || "medisync.scanner.read"
+).trim();
+export const NATS_SCANNER_STREAM = String(
+  process.env.NATS_SCANNER_STREAM || "MEDISYNC"
+).trim();
 
 if (API_BEARER_REQUIRED && !API_BEARER_TOKEN) {
   console.error(

@@ -4,7 +4,10 @@ Node.js (ESM) API for vending control with three serial channels:
 
 - **Vending** — hex payloads over serial; HTTP waits for RX after each write (SY600 helpers use this port).
 - **Navigation lights** — JSON `data` object is serialized to a line (`JSON.stringify` + newline), then sent; HTTP can wait for RX (with retries) or use fire-and-forget.
-- **QR/NFC** — scanned data is read continuously; optional MQTT publish when enabled.
+- **QR/NFC** — scanned data is read continuously; optional MQTT publish and a
+  unified QR/barcode/NFC event to MediSync Core over NATS JetStream.
+  MediSync can also consume the same cabinet-local stream at
+  `GET /api/v1/qr-nfc/events` (Bearer protected, Server-Sent Events).
 
 ## Requirements
 
@@ -37,6 +40,7 @@ Copy `.env.example` to `.env` and adjust values.
 | `SERIAL_NAVIGATION_LIGHTS_BAUD_RATE` | Baud rate (default `9600`) |
 | `SERIAL_QR_NFC` | QR/NFC reader port |
 | `SERIAL_QR_NFC_BAUD_RATE` | Baud rate (default `9600`) |
+| `KIOSK_CODE` | Stable cabinet code used for Core routing (defaults to `VENDING_CODE`) |
 | `SERIAL_WRITE_TIMEOUT_MS` | Max time to wait for **any** serial RX after a write (application serial layer). Default in code: `50000` (50s) if unset. |
 | `SERIAL_API_TIMEOUT_MS` | HTTP **socket** timeout for `POST /api/v1/serial/vending/write` only (`req`/`res` timeout). Default in code: `60000` (60s) if unset. Should be **≥** `SERIAL_WRITE_TIMEOUT_MS` so the API does not close before the serial wait finishes. |
 | `SERIAL_WRITE_DEBUG` | Log TX/RX hex and byte arrays for serial writes (`true`/`false`, default `false`). |
@@ -62,6 +66,7 @@ Other common variables:
 PORT=3303
 CUSTOMER_CODE=wnyh
 VENDING_CODE=FFFFFF12
+KIOSK_CODE=FFFFFF12
 DOOR_TYPE_STANDBY=[1,2,3]
 DOOR_TYPE_NOW=[1,2,3]
 APP_TIMEZONE=Asia/Bangkok
@@ -72,6 +77,12 @@ MQTT_ENABLED=false
 MQTT_BROKER_URL=mqtt://127.0.0.1:1883
 MQTT_CLIENT_ID=vending-3d-ctl
 MQTT_QRNFC_TOPIC=hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader
+
+NATS_ENABLED=false
+NATS_URL=nats://127.0.0.1:4222
+NATS_CLIENT_NAME=vending-FFFFFF12
+NATS_SCANNER_SUBJECT=medisync.scanner.read
+NATS_SCANNER_STREAM=MEDISYNC
 ```
 
 Notes:
@@ -251,7 +262,12 @@ Structured **JSON one line per event**. The **active** file is always `events-<c
 - All serial ports are opened and listened to at startup (lazy open + reconnect on error/close).
 - **Vending**: hex write → wait for RX (idle gap ~80ms ends the frame, or `SERIAL_WRITE_TIMEOUT_MS` overall). Writes are queued per port.
 - **Navigation lights**: object `data` → JSON line + `\n` → bytes; wait path uses the same RX idle logic and can **retry** on timeout (`SERIAL_NAVIGATION_LIGHTS_WRITE_RETRY`, `SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS`). **No-wait** path only drains after write.
-- **QR/NFC**: framing is newline-based with a short idle fallback; payloads can be published to `MQTT_QRNFC_TOPIC` when `MQTT_ENABLED=true`.
+- **QR/NFC**: framing is newline-based with a short idle fallback. With
+  `NATS_ENABLED=true`, every frame is published to Core as one envelope with
+  `kioskCode`, `scanType` (`QR`, `BARCODE`, `NFC`), `scanPurpose`
+  (`STICKER`, `DRUG_BARCODE`, `USER_NFC`), readable `value`/`parsed`, and
+  complete `raw` text/bytes/hex. MQTT remains available for legacy consumers;
+  the local `/api/v1/qr-nfc/events` stream is retained for diagnostics.
 
 ## Makefile commands
 

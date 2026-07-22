@@ -10,10 +10,11 @@ import {
   MQTT_QRNFC_BARCODE_WNY_SIGNATURE_REGEX,
   MQTT_QRNFC_TOPIC,
   MQTT_USERNAME,
-  CUSTOMER_CODE,
-  VENDING_CODE,
 } from "../config/env.js";
 import { logAgent } from "../logger/logAgent.js";
+import { publishQrNfcEvent } from "./qr-nfc.events.js";
+import { buildScannerEvent } from "./scanner-event.js";
+import { publishScannerEvent } from "./nats.service.js";
 
 /** Max UTF-8 length of `payload` stored in `events-mqtt.log` (remainder noted in field). */
 const MQTT_LOG_PAYLOAD_MAX_CHARS = 65536;
@@ -203,7 +204,7 @@ export async function publishQrNfcPayload({ payloadText, payloadBytes, portPath,
   }
 
   console.log(`[mqtt] payloadText ->`, typeof (payloadText));
-  const message = JSON.stringify({
+  const scanEvent = {
     act: action,
     code: type === "nfc-mifare" && mifare && mifare.uid ? Buffer.from(mifare.uid).toString("hex").toUpperCase() : payloadText,
     raw: payloadBytes,
@@ -218,10 +219,23 @@ export async function publishQrNfcPayload({ payloadText, payloadBytes, portPath,
       payloadBytes,
       type,
     }
-  });
-  console.log(`[mqtt] publishQrNfcPayload message ->`, message);
+  };
 
-  const topic = `hm/${CUSTOMER_CODE}/${VENDING_CODE}/reader`;
+  // Keep the legacy local SSE/MQTT payload available while Core uses the
+  // canonical JetStream envelope below. Every event remains cabinet-scoped.
+  // JetStream is the Core integration path. Keep the complete raw frame and
+  // the parsed value in one envelope so QR, barcode and NFC consumers share it.
+  const scannerEvent = buildScannerEvent({ payloadText, payloadBytes, portPath, mifare });
+  scanEvent.scanType = scannerEvent.scanType;
+  scanEvent.scanPurpose = scannerEvent.scanPurpose;
+  scanEvent.info.scanType = scannerEvent.scanType;
+  scanEvent.info.scanPurpose = scannerEvent.scanPurpose;
+  const message = JSON.stringify(scanEvent);
+  console.log(`[mqtt] publishQrNfcPayload message ->`, message);
+  publishQrNfcEvent(scanEvent);
+  const natsPublishOk = await publishScannerEvent(scannerEvent);
+
+  const topic = MQTT_QRNFC_TOPIC;
   const publishOk = await publishMqttMessage(topic, message, {
     qos: MQTT_QRNFC_QOS,
     retain: MQTT_QRNFC_RETAIN,
@@ -233,7 +247,11 @@ export async function publishQrNfcPayload({ payloadText, payloadBytes, portPath,
     readerType: type,
     action,
     publishOk,
+    natsPublishOk,
+    eventId: scannerEvent.eventId,
     payload: mqttPayloadForLog(message),
   });
-  return publishOk;
+  // A scanner event is successfully forwarded when either configured Core
+  // (JetStream) or legacy MQTT transport accepted it.
+  return publishOk || natsPublishOk;
 }

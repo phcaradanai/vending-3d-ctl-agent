@@ -8,6 +8,7 @@ import { createStream } from "rotating-file-stream";
 
 import healthRouter from "./routes/health.routes.js";
 import serialRouter from "./routes/serial.routes.js";
+import qrNfcRouter from "./routes/qr-nfc.routes.js";
 import drugDispenserRouter from "./routes/drugDispenser.routes.js";
 import sy600Router from "./routes/sy600.routes.js";
 import logsRouter from "./routes/logs.routes.js";
@@ -116,6 +117,7 @@ app.use(API_BASE_PATH, jobRouter);
 
 app.use(API_BASE_PATH, requireApiBearerToken); // Protected routes
 app.use(API_BASE_PATH, serialRouter);
+app.use(API_BASE_PATH, qrNfcRouter);
 app.use(API_BASE_PATH, drugDispenserRouter);
 app.use(API_BASE_PATH, sy600Router);
 app.use(API_BASE_PATH, logsRouter);

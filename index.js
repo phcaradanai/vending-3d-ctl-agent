@@ -15,6 +15,7 @@ import {
   SERIAL_WRITE_TIMEOUT_MS,
 } from "./src/config/env.js";
 import { initializeMqttPublisher } from "./src/services/mqtt.service.js";
+import { initializeNatsPublisher } from "./src/services/nats.service.js";
 import { initializeSerialListeners } from "./src/services/serial.service.js";
 import { logAgent } from "./src/logger/logAgent.js";
 import { getSoftwareIdentification } from "./src/config/softwareIdentification.js";
@@ -35,6 +36,7 @@ async function bootstrap() {
     qrNfc: SERIAL_QR_NFC,
   });
   initializeMqttPublisher();
+  await initializeNatsPublisher();
   await initializeSerialListeners();
 
   app.listen(PORT, () => {

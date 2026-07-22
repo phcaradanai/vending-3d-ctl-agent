@@ -7,6 +7,7 @@ import {
   writeVendingSerialData,
 } from "../services/serial.service.js";
 import { getMqttStatus } from "../services/mqtt.service.js";
+import { getNatsStatus } from "../services/nats.service.js";
 import {
   SERIAL_API_TIMEOUT_MS,
   SERIAL_NAVIGATION_LIGHTS_RETRY_DELAY_MS,
@@ -23,6 +24,7 @@ export async function healthController(_req, res) {
   const serialConfig = getSerialConfig();
   const serialHealth = getSerialHealthSnapshot();
   const mqtt = getMqttStatus();
+  const nats = getNatsStatus();
   const now = new Date().toISOString();
 
   const serialPorts = serialHealth.ports;
@@ -43,16 +45,24 @@ export async function healthController(_req, res) {
     });
   }
 
+  if (nats.enabled && !nats.isConnected) {
+    alerts.push({
+      level: "warning",
+      source: "nats",
+      message: nats.lastError || "NATS is enabled but not connected",
+    });
+  }
+
   res.json({
     status:
-      serialHealth.serialReady && (!mqtt.enabled || mqtt.isConnected)
+      serialHealth.serialReady && (!mqtt.enabled || mqtt.isConnected) && (!nats.enabled || nats.isConnected)
         ? "ok"
         : "degraded",
     timestamp: now,
     softwareIdentification,
     summary: {
       systemStatus:
-        serialHealth.serialReady && (!mqtt.enabled || mqtt.isConnected)
+          serialHealth.serialReady && (!mqtt.enabled || mqtt.isConnected) && (!nats.enabled || nats.isConnected)
           ? "ok"
           : "degraded",
       alertsCount: alerts.length,
@@ -65,11 +75,19 @@ export async function healthController(_req, res) {
         enabled: mqtt.enabled,
         connected: mqtt.isConnected,
       },
+      nats: {
+        enabled: nats.enabled,
+        connected: nats.isConnected,
+        kioskCode: nats.kioskCode,
+        scannerSubject: nats.scannerSubject,
+        scannerStream: nats.scannerStream,
+      },
       sy600: {
         deviceAddressHex: SY600_DEVICE_ADDRESS_HEX,
         useCrc16: SY600_USE_CRC16,
       },
     },
+    nats,
     devices: {
       serial: {
         summary: {
