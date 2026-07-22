@@ -43,6 +43,8 @@ Copy `.env.example` to `.env` and adjust values.
 | `KIOSK_CODE` | Stable cabinet code used for Core routing (defaults to `VENDING_CODE`) |
 | `SERIAL_WRITE_TIMEOUT_MS` | Max time to wait for **any** serial RX after a write (application serial layer). Default in code: `50000` (50s) if unset. |
 | `SERIAL_API_TIMEOUT_MS` | HTTP **socket** timeout for `POST /api/v1/serial/vending/write` only (`req`/`res` timeout). Default in code: `60000` (60s) if unset. Should be **≥** `SERIAL_WRITE_TIMEOUT_MS` so the API does not close before the serial wait finishes. |
+| `PICKUP_CONFIRMATION_TIMEOUT_MS` | Max time a Sticker dispense waits for the pickup sensor to confirm the item was removed (default `120000` ms). |
+| `PICKUP_CONFIRMATION_POLL_MS` | Poll interval for the pickup/drop sensor (default `250` ms). |
 | `SERIAL_WRITE_DEBUG` | Log TX/RX hex and byte arrays for serial writes (`true`/`false`, default `false`). |
 | `SERIAL_PORT_QUEUE_LOG` | Log per-COM write queue: enqueue / run / done and waiting labels (default `true`; set `false` to quiet). |
 | `APP_LOG_AGENT_ENABLED` | Write structured JSON to `logs/events-*.log` (default `true`). |
@@ -196,7 +198,11 @@ Both compose files:
 
   Same `cmd` meaning as the write endpoint above.
 
-- **`POST /api/v1/vending/drugDispenser`** — Dispenser command payload (requires `prescription`).
+- **`POST /api/v1/vending/drugDispenser`** — One Sticker/prescription per physical
+  dispense. Items are picked from the highest layer down, delivered once, and
+  the request remains open until sensor `0x35` (type `0`, drop/pickup IR)
+  detects the item and then detects it has been removed; the pickup door must
+  acknowledge closed before the next Sticker on this cabinet can start.
 
 ### SY600 Command API (`/api/v1/sy600/*`)
 

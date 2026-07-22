@@ -236,6 +236,17 @@ export const SERIAL_API_TIMEOUT_MS = toNumber(
   process.env.SERIAL_API_TIMEOUT_MS,
   1 * (60 * 1000)
 );
+// The dispenser request remains open until the user removes the item from
+// the pickup compartment. Keep these separate from serial RX timeouts so the
+// physical queue cannot advance before pickup is confirmed.
+export const PICKUP_CONFIRMATION_TIMEOUT_MS = Math.max(
+  1000,
+  toNumber(process.env.PICKUP_CONFIRMATION_TIMEOUT_MS, 120 * 1000)
+);
+export const PICKUP_CONFIRMATION_POLL_MS = Math.min(
+  5000,
+  Math.max(50, toNumber(process.env.PICKUP_CONFIRMATION_POLL_MS, 250))
+);
 export const SERIAL_WRITE_DEBUG = toBoolean(process.env.SERIAL_WRITE_DEBUG, false);
 /** Log per-COM serial write queue: enqueue / run / done and waiting labels (default on). */
 export const SERIAL_PORT_QUEUE_LOG = toBoolean(process.env.SERIAL_PORT_QUEUE_LOG, true);

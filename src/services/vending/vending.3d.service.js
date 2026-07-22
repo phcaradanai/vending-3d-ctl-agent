@@ -2,13 +2,20 @@ import {
   sy600ConveyorControl,
   sy600LiftControl,
   sy600MicroStepDispense,
+  sy600GetInfraredStatus,
   sy600OutputDoorControl,
   sy600PickupDoorControl,
 } from "../sy600.service.js";
+import {
+  PICKUP_CONFIRMATION_POLL_MS,
+  PICKUP_CONFIRMATION_TIMEOUT_MS,
+} from "../../config/env.js";
 import { logAgent } from "../../logger/logAgent.js";
 
 /** `sy600LiftControl` special targets for the delivery/output position of each door (see ADM-VENDIND-3DOOR.xlsx, cmd 0xC3). */
 const LIFT_DELIVERY_TARGET_BY_DOOR = { 1: 0x55, 2: 0x56, 3: 0x57 };
+const PICKUP_CONFIRMATION_SENSOR_TYPE = 0;
+let dispenseQueueTail = Promise.resolve();
 
 function ensureItems(items) {
   if (!Array.isArray(items) || !items.length) {
@@ -47,6 +54,79 @@ function ensureDoorNo(doorNo) {
 }
 
 /**
+ * Keep the physical order explicit at the agent boundary as a second line of
+ * defence for callers other than Core: highest shelf first, then lower ones.
+ * The sort is stable, so allocations on the same shelf retain their input
+ * order.
+ */
+export function orderItemsForDispense(items) {
+  return [...items].sort((left, right) => right.layer - left.layer);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Wait until the pickup compartment's drop sensor has seen the item and then
+ * reports it removed. C7 opens the door and the cabinet closes it after the
+ * user takes the item; the explicit close command below makes the closed-door
+ * acknowledgement part of the transaction before the next sticker starts.
+ */
+export async function waitForPickupConfirmation({
+  doorNo,
+  timeoutMs = PICKUP_CONFIRMATION_TIMEOUT_MS,
+  pollMs = PICKUP_CONFIRMATION_POLL_MS,
+  readSensor = sy600GetInfraredStatus,
+  closeDoor = sy600PickupDoorControl,
+}) {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let itemDetected = false;
+  let pollCount = 0;
+
+  while (Date.now() < deadline) {
+    const sensor = await readSensor({ sensorType: PICKUP_CONFIRMATION_SENSOR_TYPE });
+    pollCount += 1;
+    const blocked = sensor?.result?.blocked === true;
+    if (blocked) {
+      itemDetected = true;
+    } else if (itemDetected) {
+      const close = await closeDoor({ action: 0, doorNo });
+      const doorState = close?.result?.doorState;
+      if (!close?.success || doorState !== "closed") {
+        const error = new Error(`pickup door ${doorNo} did not confirm closed after item removal`);
+        error.status = 502;
+        error.doorState = doorState ?? null;
+        throw error;
+      }
+      return {
+        success: true,
+        result: {
+          confirmed: true,
+          sensorType: PICKUP_CONFIRMATION_SENSOR_TYPE,
+          itemDetected: true,
+          itemRemoved: true,
+          doorState,
+          pollCount,
+          waitedMs: Math.max(0, Date.now() - startedAt),
+        },
+      };
+    }
+    await sleep(pollMs);
+  }
+
+  const error = new Error(
+    `pickup confirmation timed out after ${timeoutMs} ms: item was not removed from door ${doorNo}`
+  );
+  error.status = 504;
+  error.doorNo = doorNo;
+  error.pollCount = pollCount;
+  error.itemDetected = itemDetected;
+  throw error;
+}
+
+/**
  * Run one physical step, recording it in `steps` regardless of outcome so a
  * failed/aborted order still reports exactly how far it got and why — the
  * caller (HTTP layer) needs the full step trail, not just a final boolean.
@@ -82,18 +162,19 @@ async function runStep(steps, phase, meta, task) {
  * Full pick-and-deliver flow for a prescription/order spanning one or more
  * layers — e.g. 5 items split across layer 4, layer 3, layer 2. Each item is
  * picked in sequence (lift → layer, then micro-step dispense onto the lift
- * tray) before a single delivery pass moves everything collected to the
- * output door → conveyor → pickup door.
+ * tray) before a single delivery pass moves everything collected through the
+ * fixed cabinet sequence: lift → output-door-open (inner) → forward conveyor
+ * → pickup-door-open (outer) → output-door-close (inner).
  *
  * Every step's real response (via the fixed `sy600.service.js` frame
  * matching) is recorded in `steps`; the order aborts on the first failed
  * step instead of continuing to command hardware whose prior step didn't
  * actually confirm success.
  *
- * @param {{ prescriptionNo: string, items: Array<{ layer: number, channelStart: number, channelEnd: number, qty?: number }>, doorNo?: 1|2|3 }} params
+ * @param {{ prescriptionNo: string, items: Array<{ allocationId?: string, layer: number, channelStart: number, channelEnd: number, qty?: number }>, doorNo?: 1|2|3 }} params
  */
-export async function dispenseOrder({ prescriptionNo, items, doorNo }) {
-  const validatedItems = ensureItems(items);
+async function dispenseOrderUnlocked({ prescriptionNo, items, doorNo }) {
+  const validatedItems = orderItemsForDispense(ensureItems(items));
   const validatedDoorNo = ensureDoorNo(doorNo);
   const deliveryTarget = LIFT_DELIVERY_TARGET_BY_DOOR[validatedDoorNo];
 
@@ -102,14 +183,18 @@ export async function dispenseOrder({ prescriptionNo, items, doorNo }) {
 
   try {
     for (const item of validatedItems) {
-      await runStep(steps, "lift", { layer: item.layer }, () =>
+      const itemMeta = {
+        layer: item.layer,
+        ...(item.allocationId ? { allocationId: item.allocationId } : {}),
+      };
+      await runStep(steps, "lift", itemMeta, () =>
         sy600LiftControl({ target: item.layer })
       );
       await runStep(
         steps,
         "dispense",
         {
-          layer: item.layer,
+          ...itemMeta,
           channelStart: item.channelStart,
           channelEnd: item.channelEnd,
           qty: item.qty ?? 1,
@@ -140,10 +225,13 @@ export async function dispenseOrder({ prescriptionNo, items, doorNo }) {
     await runStep(steps, "pickup-door-open", { doorNo: validatedDoorNo }, () =>
       sy600PickupDoorControl({ action: 1, doorNo: validatedDoorNo })
     );
-    // Pickup door auto-closes on the device once the item is taken (0xC7 spec).
-    // The output door is our own cleanup so the chute isn't left open.
+    // The output door is our own cleanup so the chute isn't left open while
+    // the user is picking up the item.
     await runStep(steps, "output-door-close", { doorNo: validatedDoorNo }, () =>
       sy600OutputDoorControl({ action: 0, doorNo: validatedDoorNo })
+    );
+    await runStep(steps, "pickup-confirmation", { doorNo: validatedDoorNo, sensorType: PICKUP_CONFIRMATION_SENSOR_TYPE }, () =>
+      waitForPickupConfirmation({ doorNo: validatedDoorNo })
     );
 
     const completedAt = new Date().toISOString();
@@ -183,4 +271,23 @@ export async function dispenseOrder({ prescriptionNo, items, doorNo }) {
     orderError.steps = steps;
     throw orderError;
   }
+}
+
+/**
+ * Serialize complete Sticker transactions for this physical cabinet. The
+ * serial write queue alone is not enough because two orders could otherwise
+ * interleave while the first user still has the pickup door open.
+ */
+export function dispenseOrder(params) {
+  const previous = dispenseQueueTail;
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  dispenseQueueTail = current;
+
+  return previous
+    .catch(() => {})
+    .then(() => dispenseOrderUnlocked(params))
+    .finally(() => release());
 }

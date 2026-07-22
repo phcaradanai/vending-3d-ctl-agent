@@ -1661,8 +1661,9 @@ const swaggerSpec = {
       },
       DrugDispenserItem: {
         type: "object",
-        description: "One pick — a layer/channel range on the vending unit, e.g. floor 4 channel 0.",
+        description: "One pick — a layer/channel range. When multiple layers are sent, the agent executes highest layer first and delivers once after all picks.",
         properties: {
+          allocationId: { type: "string", description: "Optional Core allocation identifier echoed on lift/dispense steps for transaction tracking." },
           layer: { type: "number", example: 4, description: "SY600 floor/layer (0xC3 target)" },
           channelStart: { type: "number", example: 0 },
           channelEnd: { type: "number", example: 0 },
@@ -1677,7 +1678,7 @@ const swaggerSpec = {
           ctrl: { type: "number", example: 3 },
           items: {
             type: "array",
-            description: "One or more picks, across one or more layers — dispensed in order before delivery.",
+            description: "One or more picks across layers — highest layer first, then lower layers, followed by one delivery/pickup pass.",
             items: { $ref: "#/components/schemas/DrugDispenserItem" },
           },
           doorNo: { type: "number", enum: [1, 2, 3], example: 1, description: "Output/pickup door for delivery. Defaults to DOOR_TYPE_STANDBY[0]." },
@@ -1688,9 +1689,10 @@ const swaggerSpec = {
       },
       DrugDispenserStep: {
         type: "object",
-        description: "One physical step of the flow (lift/dispense per item, then lift-to-delivery/output-door-open/conveyor/pickup-door-open/output-door-close).",
+        description: "One physical step of the flow (lift/dispense per item, delivery, pickup-door-open, output-door-close, then pickup-confirmation after the user removes the item).",
         properties: {
           phase: { type: "string", example: "dispense" },
+          allocationId: { type: "string", description: "Core allocation identifier for the item step, when supplied." },
           success: { type: "boolean" },
           txHex: { type: "string", nullable: true },
           response: { type: "object", nullable: true, description: "Decoded SY600 response (present when success is true)" },
