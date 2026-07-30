@@ -48,7 +48,7 @@ Errors are centralized in `src/middleware/error.middleware.js`: any thrown/rejec
 
 `src/app.js` serves a hardware bring-up console: `GET /manual-test` (static assets from `public/manual-test/`) plus `GET /manual-test/commands.json`, which serializes `getManualTestCatalog()` from `src/manual-test/commandCatalog.js`. That catalog is the single source of truth for the UI — each command carries `endpoint`, `method`, `risk`, `defaultBody`, `controls` (form fields bound to body paths), and `focus` (which machine part to highlight, plus the body paths behind it). Adding a route to the console means adding a catalog entry, not touching the page.
 
-`public/manual-test/ledMatrix.js` holds the navigation-light geometry: the strip is 165 LEDs wired serpentine with LED 1 at the bottom-left, odd rows (from the bottom) running left to right and even rows right to left. It is a pure module with no DOM access precisely so `test/manual-test.ledMatrix.test.js` can import it directly.
+`public/manual-test/ledMatrix.js` holds the navigation-light geometry: the strip is 165 LEDs with LED 1 at the bottom-left, rows counted from the bottom, and every row restarting at the left edge (no serpentine return run). It is a pure module with no DOM access precisely so `test/manual-test.ledMatrix.test.js` can import it directly.
 
 `cmd/manual-test/embedded/` is a byte-identical copy of `public/manual-test/` consumed by the Go launcher's `//go:embed embedded/*`. There is no build step that copies it — edit `public/manual-test/`, then copy the changed files across, or the standalone launcher silently serves a stale UI.
 

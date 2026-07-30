@@ -270,9 +270,10 @@ function renderFlowSteps() {
   });
 }
 
-// The LED panel renders the physical serpentine wiring (see ledMatrix.js)
-// instead of one flat left-to-right bar, so a LED range on screen matches the
-// machine standing in front of the tester.
+// The LED panel renders the physical wiring (see ledMatrix.js): LED 1 at the
+// bottom-left, every row restarting at the left edge. Rendering that instead of
+// one flat bar is what makes a LED range on screen match the machine standing in
+// front of the tester.
 function isLedActionable(command) {
   const focus = command?.focus || {};
   return focus.area === "navigationLights" && Boolean(focus.ledStartPath && focus.ledEndPath);
@@ -340,15 +341,16 @@ function renderLedPanel(command, body) {
       : "";
   els.ledHint.textContent =
     (actionable
-      ? "Click an LED to target it. Drag or Shift-click for a range. LED 1 = bottom-left, rows snake."
-      : "Select a navigation-light command to target LEDs. LED 1 = bottom-left, rows snake.") + coverageNote;
+      ? "Click an LED to target it. Drag or Shift-click for a range. LED 1 = bottom-left, every row runs left to right."
+      : "Select a navigation-light command to target LEDs. LED 1 = bottom-left, every row runs left to right.") +
+    coverageNote;
 
   els.ledBar.innerHTML = "";
   for (let row = state.ledRows; row >= 1; row -= 1) {
     const label = document.createElement("div");
     label.className = "led-row-label";
-    label.textContent = `${row}${row % 2 === 1 ? " →" : " ←"}`;
-    label.title = `Row ${row} from the bottom, wired ${row % 2 === 1 ? "left to right" : "right to left"}`;
+    label.textContent = `${row} →`;
+    label.title = `Row ${row} from the bottom, wired left to right from LED ${ledIndexAt(row, 1, state.ledCols)}`;
     els.ledBar.append(label);
 
     for (let col = 1; col <= state.ledCols; col += 1) {

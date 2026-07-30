@@ -6,17 +6,17 @@ test("LED 1 sits at the bottom-left corner", () => {
   assert.equal(ledIndexAt(1, 1, 22), 1);
 });
 
-test("odd rows run left to right, even rows run right to left", () => {
+test("every row restarts at the left edge", () => {
   const cols = 22;
   assert.equal(ledIndexAt(1, cols, cols), 22);
-  // Row 2 turns around: its first LED (23) is on the right edge.
-  assert.equal(ledIndexAt(2, cols, cols), 23);
-  assert.equal(ledIndexAt(2, 1, cols), 44);
+  // Row 2 does not snake back: its first LED (23) is on the left edge again.
+  assert.equal(ledIndexAt(2, 1, cols), 23);
+  assert.equal(ledIndexAt(2, cols, cols), 44);
   assert.equal(ledIndexAt(3, 1, cols), 45);
   assert.equal(ledIndexAt(3, cols, cols), 66);
 });
 
-test("serpentine indexes cover every cell exactly once", () => {
+test("indexes cover every cell exactly once", () => {
   for (const cols of [5, 11, 22, 33]) {
     const rows = 5;
     const seen = new Set();
