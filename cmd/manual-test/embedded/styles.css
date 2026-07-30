@@ -462,22 +462,90 @@ button:focus-visible {
   border-bottom: 1px solid var(--line);
 }
 
+.led-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.led-title {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.led-range {
+  margin-right: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+}
+
 .led-bar {
   display: grid;
-  grid-template-columns: repeat(24, minmax(6px, 1fr));
-  gap: 3px;
-  min-height: 20px;
+  grid-template-columns: 30px repeat(var(--led-cols, 22), minmax(14px, 1fr));
+  gap: 2px;
+  touch-action: none;
 }
 
-.led-segment {
+.led-row-label {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.led-cell {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 16px;
+  padding: 0;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 3px;
   background: var(--panel-2);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1;
+  overflow: hidden;
 }
 
-.led-segment.is-focus {
-  border-color: var(--warn);
-  background: color-mix(in oklch, var(--warn), white 70%);
+.led-cell.is-inert {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.led-cell.is-overflow {
+  border-style: dashed;
+  background: transparent;
+  color: color-mix(in oklch, var(--muted), transparent 60%);
+  cursor: not-allowed;
+}
+
+.led-cell.is-actionable:hover {
+  border-color: var(--accent);
+}
+
+.led-cell.is-focus {
+  border-color: var(--line-strong);
+  background: var(--led-color, var(--warn));
+  /* Index stays readable over any LED colour, including black. */
+  color: white;
+  text-shadow: 0 0 2px rgb(0 0 0 / 0.85);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.led-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .machine-body {
@@ -1073,7 +1141,7 @@ pre {
   .slot-cell,
   .door,
   .subsystem,
-  .led-segment,
+  .led-cell,
   .io-drawer {
     transition: background-color 180ms ease-out, border-color 180ms ease-out, color 180ms ease-out;
   }

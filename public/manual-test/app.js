@@ -1,3 +1,5 @@
+import { LED_MAX, ledIndexAt } from "./ledMatrix.js?v=20260730-1";
+
 const GROUP_ICONS = {
   Status: '<path d="M3 12h4l2-7 4 14 2-7h6"/>',
   "Raw serial": '<path d="M4 5h16v14H4z"/><path d="M7 9l3 3-3 3"/><path d="M13 15h4"/>',
@@ -26,6 +28,17 @@ function clampInt(value, min, max, fallback) {
   return Math.min(max, Math.max(min, n));
 }
 
+function clampNumber(value, min, max) {
+  let next = value;
+  if (min !== undefined && next < min) next = min;
+  if (max !== undefined && next > max) next = max;
+  return next;
+}
+
+function readStoredInt(key, fallback, min, max) {
+  return clampInt(localStorage.getItem(key), min, max, fallback);
+}
+
 const state = {
   catalog: { commands: [], flows: [] },
   activeCommandId: null,
@@ -34,8 +47,10 @@ const state = {
   baseUrl: localStorage.getItem("manualTest.baseUrl") || window.location.origin,
   history: JSON.parse(localStorage.getItem("manualTest.history") || "[]"),
   flowProgress: new Map(),
-  gridRows: 5,
-  gridCols: 22,
+  gridRows: readStoredInt("manualTest.gridRows", 5, 1, 20),
+  gridCols: readStoredInt("manualTest.gridCols", 22, 1, 40),
+  ledRows: readStoredInt("manualTest.ledRows", 5, 1, 20),
+  ledCols: readStoredInt("manualTest.ledCols", 22, 1, 40),
 };
 
 const els = {
@@ -49,6 +64,10 @@ const els = {
   activeCommandTitle: document.querySelector("#activeCommandTitle"),
   riskBadge: document.querySelector("#riskBadge"),
   ledBar: document.querySelector("#ledBar"),
+  ledRangeLabel: document.querySelector("#ledRangeLabel"),
+  ledHint: document.querySelector("#ledHint"),
+  ledRowsInput: document.querySelector("#ledRowsInput"),
+  ledColsInput: document.querySelector("#ledColsInput"),
   slotGrid: document.querySelector("#slotGrid"),
   slotHint: document.querySelector("#slotHint"),
   slotHeaderLabel: document.querySelector("#slotHeaderLabel"),
@@ -114,6 +133,16 @@ function parseEditorBody() {
   const raw = els.bodyEditor.value.trim();
   if (!raw) return null;
   return JSON.parse(raw);
+}
+
+// Body as the editor currently shows it, falling back to the last valid state so
+// a half-typed JSON edit never wipes the body being built.
+function currentBody() {
+  try {
+    return parseEditorBody();
+  } catch {
+    return state.body;
+  }
 }
 
 function normalizeBaseUrl() {
@@ -241,36 +270,176 @@ function renderFlowSteps() {
   });
 }
 
-function renderLedBar(command, body) {
+// The LED panel renders the physical serpentine wiring (see ledMatrix.js)
+// instead of one flat left-to-right bar, so a LED range on screen matches the
+// machine standing in front of the tester.
+function isLedActionable(command) {
   const focus = command?.focus || {};
-  const ledStart = focus.ledStartPath ? Number(getByPath(body, focus.ledStartPath)) : null;
-  const ledEnd = focus.ledEndPath ? Number(getByPath(body, focus.ledEndPath)) : null;
+  return focus.area === "navigationLights" && Boolean(focus.ledStartPath && focus.ledEndPath);
+}
+
+function readLedRange(command, body) {
+  const focus = command?.focus || {};
+  if (focus.area !== "navigationLights") return null;
+  const start = focus.ledStartPath ? Number(getByPath(body, focus.ledStartPath)) : NaN;
+  const end = focus.ledEndPath ? Number(getByPath(body, focus.ledEndPath)) : NaN;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return { from: Math.min(start, end), to: Math.max(start, end) };
+}
+
+function ledColor(command, body) {
+  const focus = command?.focus || {};
+  if (focus.area !== "navigationLights" || !focus.ledStartPath) return null;
+  // RGB lives in the three slots after the LED range on the same cmd array.
+  const base = focus.ledStartPath.slice(0, -1);
+  const index = Number(focus.ledStartPath[focus.ledStartPath.length - 1]);
+  if (!Number.isFinite(index)) return null;
+  const channels = [2, 3, 4].map((offset) => Number(getByPath(body, [...base, index + offset])));
+  if (channels.some((channel) => !Number.isFinite(channel))) return null;
+  const [r, g, b] = channels.map((channel) => clampNumber(Math.round(channel), 0, 255));
+  return `rgb(${r} ${g} ${b})`;
+}
+
+function ledCoverage() {
+  return state.ledRows * state.ledCols;
+}
+
+function paintLedRange(range) {
+  const covered = ledCoverage();
+  const cells = els.ledBar.querySelectorAll(".led-cell");
+  cells.forEach((cell) => {
+    const index = Number(cell.dataset.ledIndex);
+    const lit = Boolean(range) && index >= range.from && index <= range.to && index <= LED_MAX;
+    cell.classList.toggle("is-focus", lit);
+  });
+
+  if (!range) {
+    els.ledRangeLabel.textContent = "no LED range";
+    return;
+  }
+  // A matrix smaller than the strip cannot show the whole range. Say so, or an
+  // unlit panel reads as a dead click instead of a coverage gap.
+  let suffix = "";
+  if (range.from > covered) suffix = " · off panel";
+  else if (range.to > covered) suffix = ` · shown to ${covered}`;
+  els.ledRangeLabel.textContent = `LED ${range.from}-${range.to}${suffix}`;
+}
+
+function renderLedPanel(command, body) {
+  const actionable = isLedActionable(command);
+  const range = readLedRange(command, body);
+  const color = ledColor(command, body);
+
+  els.ledBar.style.setProperty("--led-cols", state.ledCols);
+  els.ledBar.style.setProperty("--led-color", color || "var(--warn)");
+  els.ledBar.classList.toggle("is-actionable", actionable);
+  const covered = ledCoverage();
+  const coverageNote =
+    covered < LED_MAX
+      ? ` Matrix covers LED 1-${covered} of ${LED_MAX} — raise R/C to reach the rest.`
+      : "";
+  els.ledHint.textContent =
+    (actionable
+      ? "Click an LED to target it. Drag or Shift-click for a range. LED 1 = bottom-left, rows snake."
+      : "Select a navigation-light command to target LEDs. LED 1 = bottom-left, rows snake.") + coverageNote;
 
   els.ledBar.innerHTML = "";
-  for (let i = 0; i < 24; i += 1) {
-    const start = Math.floor((i / 24) * 165) + 1;
-    const end = Math.floor(((i + 1) / 24) * 165);
-    const segment = document.createElement("div");
-    segment.className = "led-segment";
-    segment.title = `LED ${start}-${end}`;
-    if (focus.area === "navigationLights" && ledStart <= end && ledEnd >= start) {
-      segment.classList.add("is-focus");
+  for (let row = state.ledRows; row >= 1; row -= 1) {
+    const label = document.createElement("div");
+    label.className = "led-row-label";
+    label.textContent = `${row}${row % 2 === 1 ? " →" : " ←"}`;
+    label.title = `Row ${row} from the bottom, wired ${row % 2 === 1 ? "left to right" : "right to left"}`;
+    els.ledBar.append(label);
+
+    for (let col = 1; col <= state.ledCols; col += 1) {
+      const index = ledIndexAt(row, col, state.ledCols);
+      const overflow = index > LED_MAX;
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.dataset.ledIndex = index;
+      cell.className = `led-cell${overflow ? " is-overflow" : actionable ? " is-actionable" : " is-inert"}`;
+      cell.textContent = index;
+      cell.disabled = overflow;
+      cell.setAttribute(
+        "aria-label",
+        overflow
+          ? `LED ${index} is past the ${LED_MAX} LED strip`
+          : `LED ${index}, row ${row} from bottom, column ${col} from left`
+      );
+      els.ledBar.append(cell);
     }
-    segment.addEventListener("click", () => {
-      if (!focus.ledStartPath || !focus.ledEndPath) return;
-      const nextBody = parseEditorBody();
-      setByPath(nextBody, focus.ledStartPath, start);
-      setByPath(nextBody, focus.ledEndPath, end);
-      updateBody(nextBody);
-    });
-    els.ledBar.append(segment);
   }
+
+  paintLedRange(range);
+}
+
+let ledDragAnchor = null;
+let ledDragIndex = null;
+
+function applyLedRange(from, to) {
+  const command = getActiveCommand();
+  if (!isLedActionable(command)) return;
+  const focus = command.focus;
+  const nextBody = currentBody() ?? clone(command.defaultBody) ?? {};
+  setByPath(nextBody, focus.ledStartPath, Math.min(from, to));
+  setByPath(nextBody, focus.ledEndPath, Math.max(from, to));
+  updateBody(nextBody);
+}
+
+function ledIndexFromPoint(clientX, clientY) {
+  const element = document.elementFromPoint(clientX, clientY);
+  const cell = element?.closest?.(".led-cell.is-actionable");
+  return cell ? Number(cell.dataset.ledIndex) : null;
+}
+
+function attachLedEvents() {
+  els.ledBar.addEventListener("pointerdown", (event) => {
+    const cell = event.target.closest(".led-cell.is-actionable");
+    if (!cell) return;
+    event.preventDefault();
+    const index = Number(cell.dataset.ledIndex);
+    if (event.shiftKey) {
+      const range = readLedRange(getActiveCommand(), currentBody() || {});
+      applyLedRange(range ? range.from : index, index);
+      return;
+    }
+    ledDragAnchor = index;
+    ledDragIndex = index;
+    // Paint only while dragging; the body is written once on pointerup so a
+    // drag does not fire a re-render (and DOM rebuild) per cell crossed.
+    paintLedRange({ from: index, to: index });
+  });
+
+  document.addEventListener("pointermove", (event) => {
+    if (ledDragAnchor === null) return;
+    const index = ledIndexFromPoint(event.clientX, event.clientY);
+    if (index === null || index === ledDragIndex) return;
+    ledDragIndex = index;
+    paintLedRange({ from: Math.min(ledDragAnchor, index), to: Math.max(ledDragAnchor, index) });
+  });
+
+  document.addEventListener("pointerup", () => {
+    if (ledDragAnchor === null) return;
+    const anchor = ledDragAnchor;
+    const index = ledDragIndex ?? anchor;
+    ledDragAnchor = null;
+    ledDragIndex = null;
+    applyLedRange(anchor, index);
+  });
+
+  document.addEventListener("pointercancel", () => {
+    ledDragAnchor = null;
+    ledDragIndex = null;
+    renderMachine();
+  });
 }
 
 function renderSlotGrid(command, body) {
   const focus = command?.focus || {};
   const actionable = isSlotActionable(command);
-  els.slotHint.hidden = true;
+  // Only worth saying on a slot-focused command whose cells do nothing; on
+  // unrelated commands the dimmed grid already says enough.
+  els.slotHint.hidden = !(focus.area === "slots" && !actionable);
   els.slotHeaderLabel.textContent = `Layer × channel 0-${state.gridCols - 1}`;
 
   const rawLayer = focus.layerPath ? Number(getByPath(body, focus.layerPath)) : null;
@@ -378,21 +547,70 @@ function renderLiftFocus(command, body) {
 
 function renderMachine() {
   const command = getActiveCommand();
-  let body = state.body;
-  try {
-    body = parseEditorBody();
-  } catch {
-    body = state.body;
-  }
-  renderLedBar(command, body || {});
+  const body = currentBody();
+  renderLedPanel(command, body || {});
   renderSlotGrid(command, body || {});
   renderDoorFocus(command, body || {});
   renderLiftFocus(command, body || {});
 }
 
-function renderControls() {
+// Live bindings for the inputs currently in the form. The form is rebuilt only
+// when the active command changes; every other update writes values into these
+// existing inputs (see syncControls), so typing never destroys the field under
+// the caret.
+let controlBindings = [];
+
+function commitControl(control, input, { live }) {
+  const raw = input.value;
+  const nextBody = currentBody() ?? {};
+
+  if (control.type === "number") {
+    if (raw.trim() === "") {
+      // An empty field is a keystroke on the way to a new number, not a zero.
+      // Leave the body untouched until the field is committed.
+      if (live) return;
+      const fallback = control.min ?? 0;
+      input.value = String(fallback);
+      setByPath(nextBody, control.path, fallback);
+    } else {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) return;
+      // Clamp on commit only: clamping mid-typing rewrites the field and makes
+      // values like 0 impossible to reach on a min-1 control.
+      const value = live ? parsed : clampNumber(parsed, control.min, control.max);
+      if (!live && value !== parsed) input.value = String(value);
+      setByPath(nextBody, control.path, value);
+    }
+  } else if (control.type === "select") {
+    const option = control.options?.find((item) => String(item.value) === raw);
+    setByPath(nextBody, control.path, option ? option.value : raw);
+  } else if (control.type === "boolean") {
+    setByPath(nextBody, control.path, raw === "true");
+  } else {
+    setByPath(nextBody, control.path, raw);
+  }
+
+  updateBody(nextBody);
+}
+
+function syncControls() {
+  for (const { control, input } of controlBindings) {
+    if (input === document.activeElement) continue;
+    const value = getByPath(state.body, control.path);
+    if (control.type === "boolean") {
+      input.value = String(Boolean(value));
+    } else if (control.type === "select") {
+      input.value = String(value);
+    } else {
+      input.value = value ?? "";
+    }
+  }
+}
+
+function buildControls() {
   const command = getActiveCommand();
   els.controlForm.innerHTML = "";
+  controlBindings = [];
   if (!command) return;
 
   for (const control of command.controls) {
@@ -428,6 +646,7 @@ function renderControls() {
     } else {
       input = document.createElement("input");
       input.type = control.type === "number" ? "number" : "text";
+      if (control.type === "number") input.step = 1;
       if (control.min !== undefined) input.min = control.min;
       if (control.max !== undefined) input.max = control.max;
       input.value = value ?? "";
@@ -435,29 +654,22 @@ function renderControls() {
       if (control.placeholder) input.placeholder = control.placeholder;
     }
 
-    input.addEventListener("input", () => {
-      const nextBody = parseEditorBody() ?? {};
-      let nextValue = input.value;
-      if (control.type === "number" || control.type === "select") {
-        const option = control.options?.find((item) => String(item.value) === input.value);
-        nextValue = option ? option.value : Number(input.value);
-      }
-      if (control.type === "boolean") {
-        nextValue = input.value === "true";
-      }
-      setByPath(nextBody, control.path, nextValue);
-      updateBody(nextBody);
-    });
+    input.addEventListener("input", () => commitControl(control, input, { live: true }));
+    if (control.type === "number") {
+      input.addEventListener("change", () => commitControl(control, input, { live: false }));
+      input.addEventListener("blur", () => commitControl(control, input, { live: false }));
+    }
 
     label.append(input);
     els.controlForm.append(label);
+    controlBindings.push({ control, input });
   }
 }
 
 function updateBody(nextBody) {
   state.body = clone(nextBody);
-  els.bodyEditor.value = pretty(state.body);
-  renderControls();
+  if (document.activeElement !== els.bodyEditor) els.bodyEditor.value = pretty(state.body);
+  syncControls();
   renderMachine();
 }
 
@@ -475,7 +687,7 @@ function selectCommand(commandId) {
   els.bodyEditor.value = pretty(state.body);
   els.bodyEditor.disabled = command.defaultBody === null;
   renderCommandIcons();
-  renderControls();
+  buildControls();
   renderMachine();
 }
 
@@ -551,7 +763,20 @@ async function sendCommand(command = getActiveCommand(), explicitBody, options =
   if (!command) return null;
   saveSettings();
 
-  const requestBody = getRequestBody(command, explicitBody);
+  let requestBody;
+  try {
+    requestBody = getRequestBody(command, explicitBody);
+  } catch (error) {
+    // Invalid JSON in the editor used to reject silently and look like a dead
+    // Send button; report it in the drawer instead.
+    els.responseMeta.textContent = "Request body is not valid JSON";
+    els.responseOutput.textContent = pretty({ error: error.message });
+    els.ioDrawerStatus.textContent = "Invalid JSON";
+    els.ioDrawerToggle.classList.add("is-error");
+    openDrawer("response");
+    return null;
+  }
+
   if (command.protected && !state.token) {
     const proceed = window.confirm("Protected API ต้องใช้ Bearer token. ส่งต่อโดยไม่มี token?");
     if (!proceed) return null;
@@ -675,7 +900,7 @@ function openSlotPopover(cellEl, row, channel, command) {
 
   els.slotPopover.querySelector('[data-action="cancel"]').addEventListener("click", hideSlotPopover);
   els.slotPopover.querySelector('[data-action="confirm"]').addEventListener("click", async () => {
-    const nextBody = parseEditorBody() ?? clone(command.defaultBody) ?? {};
+    const nextBody = currentBody() ?? clone(command.defaultBody) ?? {};
     if (focus.layerPath) setByPath(nextBody, focus.layerPath, row + (focus.layerOffset ?? 0));
     if (focus.channelStartPath) setByPath(nextBody, focus.channelStartPath, channel + (focus.channelOffset ?? 0));
     if (focus.channelEndPath) setByPath(nextBody, focus.channelEndPath, channel + (focus.channelOffset ?? 0));
@@ -689,6 +914,8 @@ function openSlotPopover(cellEl, row, channel, command) {
 function applyGridConfig() {
   els.gridRowsInput.value = state.gridRows;
   els.gridColsInput.value = state.gridCols;
+  els.ledRowsInput.value = state.ledRows;
+  els.ledColsInput.value = state.ledCols;
   renderMachine();
 }
 
@@ -702,12 +929,17 @@ function attachEvents() {
   els.sendCommandButton.addEventListener("click", () => sendCommand());
   els.resetBodyButton.addEventListener("click", () => {
     const command = getActiveCommand();
-    if (command) updateBody(command.defaultBody);
+    if (!command) return;
+    state.body = clone(command.defaultBody);
+    els.bodyEditor.value = pretty(state.body);
+    // Explicit reset: rebuild so a focused field also snaps back to default.
+    buildControls();
+    renderMachine();
   });
   els.bodyEditor.addEventListener("input", () => {
     try {
       state.body = parseEditorBody();
-      renderControls();
+      syncControls();
       renderMachine();
     } catch {
       // Keep raw editor text while invalid JSON is being typed.
@@ -733,18 +965,31 @@ function attachEvents() {
   });
   els.gridRowsInput.addEventListener("change", () => {
     state.gridRows = clampInt(els.gridRowsInput.value, 1, 20, state.gridRows);
+    localStorage.setItem("manualTest.gridRows", state.gridRows);
     applyGridConfig();
   });
   els.gridColsInput.addEventListener("change", () => {
     state.gridCols = clampInt(els.gridColsInput.value, 1, 40, state.gridCols);
+    localStorage.setItem("manualTest.gridCols", state.gridCols);
     applyGridConfig();
   });
+  els.ledRowsInput.addEventListener("change", () => {
+    state.ledRows = clampInt(els.ledRowsInput.value, 1, 20, state.ledRows);
+    localStorage.setItem("manualTest.ledRows", state.ledRows);
+    applyGridConfig();
+  });
+  els.ledColsInput.addEventListener("change", () => {
+    state.ledCols = clampInt(els.ledColsInput.value, 1, 40, state.ledCols);
+    localStorage.setItem("manualTest.ledCols", state.ledCols);
+    applyGridConfig();
+  });
+  attachLedEvents();
   document.querySelectorAll(".door").forEach((door) =>
     door.addEventListener("click", () => {
       const command = getActiveCommand();
       const focus = command?.focus || {};
       if (!focus.doorPath) return;
-      const nextBody = parseEditorBody();
+      const nextBody = currentBody() ?? clone(command.defaultBody) ?? {};
       setByPath(nextBody, focus.doorPath, Number(door.dataset.door));
       updateBody(nextBody);
     })

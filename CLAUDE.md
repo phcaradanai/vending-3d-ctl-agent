@@ -12,7 +12,7 @@ make check         # syntax-checks core files with `node --check` (apps.js, src/
                     # src/controllers/serial.controller.js, src/services/serial.service.js)
 ```
 
-There is no real test suite — `npm test` / `make test` just runs `echo "Error: no test specified" && exit 1`.
+`npm test` (or `make test`) runs `node --test` over `test/` — currently 46 tests covering the SY600/cabinet frame codecs, the dispenser order flow, the manual-test command catalog, and the manual-test LED geometry. `npm run test:flow` drives `scripts/manual-test-flow.mjs` (dry-run by default; `--execute` talks to real hardware).
 
 Docker:
 
@@ -43,6 +43,14 @@ All three ports use the same lazy-open-and-reuse pattern (`getPort`) and auto-re
 `POST /api/v1/vending/drugDispenser` (`src/routes/drugDispenser.routes.js`) is a synchronous stub: it validates `prescription`, echoes back a fabricated response payload, and does not talk to serial hardware. `src/services/vending/vending.3d.service.js` exists but is currently empty — dispenser logic has not been implemented there yet.
 
 Errors are centralized in `src/middleware/error.middleware.js`: any thrown/rejected error with a `.status` property (e.g. 400 for validation, 504 for serial timeout) is surfaced with that status code; otherwise it falls back to 500.
+
+### Manual test UI
+
+`src/app.js` serves a hardware bring-up console: `GET /manual-test` (static assets from `public/manual-test/`) plus `GET /manual-test/commands.json`, which serializes `getManualTestCatalog()` from `src/manual-test/commandCatalog.js`. That catalog is the single source of truth for the UI — each command carries `endpoint`, `method`, `risk`, `defaultBody`, `controls` (form fields bound to body paths), and `focus` (which machine part to highlight, plus the body paths behind it). Adding a route to the console means adding a catalog entry, not touching the page.
+
+`public/manual-test/ledMatrix.js` holds the navigation-light geometry: the strip is 165 LEDs wired serpentine with LED 1 at the bottom-left, odd rows (from the bottom) running left to right and even rows right to left. It is a pure module with no DOM access precisely so `test/manual-test.ledMatrix.test.js` can import it directly.
+
+`cmd/manual-test/embedded/` is a byte-identical copy of `public/manual-test/` consumed by the Go launcher's `//go:embed embedded/*`. There is no build step that copies it — edit `public/manual-test/`, then copy the changed files across, or the standalone launcher silently serves a stale UI.
 
 API docs are hand-maintained as a static OpenAPI object in `src/docs/swagger.js` (not auto-generated from routes) and served at `/docs`. When adding/changing a route, update this file too.
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Manual Test Console</title>
-    <link rel="stylesheet" href="/manual-test/styles.css?v=20260709-1410" />
+    <link rel="stylesheet" href="/manual-test/styles.css?v=20260730-1" />
   </head>
   <body>
     <header class="topbar">
@@ -77,7 +77,20 @@
 
         <div class="machine-shell machine-component">
           <div class="machine-topline machine-component__topline">
-            <div id="ledBar" class="led-bar" aria-label="Navigation light segments"></div>
+            <div class="led-header">
+              <span class="led-title">Navigation LEDs</span>
+              <span id="ledRangeLabel" class="led-range">-</span>
+              <div class="grid-config" aria-label="LED matrix size">
+                <label>R<input id="ledRowsInput" type="number" min="1" max="20" inputmode="numeric" /></label>
+                <label>C<input id="ledColsInput" type="number" min="1" max="40" inputmode="numeric" /></label>
+              </div>
+            </div>
+            <div
+              id="ledBar"
+              class="led-bar"
+              aria-label="Navigation light LEDs, serpentine wiring starting at bottom-left"
+            ></div>
+            <p id="ledHint" class="led-hint">LED 1 = bottom-left. Rows snake: odd rows run left to right, even rows right to left.</p>
           </div>
 
           <div class="machine-body machine-component__body">
@@ -165,6 +178,6 @@
     <div id="commandTooltip" class="command-tooltip" role="tooltip" hidden></div>
     <div id="slotPopover" class="slot-popover" popover="manual"></div>
 
-    <script type="module" src="/manual-test/app.js?v=20260709-1410"></script>
+    <script type="module" src="/manual-test/app.js?v=20260730-1"></script>
   </body>
 </html>
