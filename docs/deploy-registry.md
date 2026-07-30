@@ -38,7 +38,7 @@ docker push "$REGISTRY:$VERSION"
 
 dir Dockerfile
 
-set VERSION=1.0.4
+set VERSION=1.0.5
 set REGISTRY=registry.rd.ns.co.th/chularat3inter/vending-3d-ctl
 
 docker build --no-cache --build-arg APP_VERSION=%VERSION% -t %REGISTRY%:latest -t %REGISTRY%:%VERSION% .
