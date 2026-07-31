@@ -13,6 +13,7 @@ import drugDispenserRouter from "./routes/drugDispenser.routes.js";
 import sy600Router from "./routes/sy600.routes.js";
 import logsRouter from "./routes/logs.routes.js";
 import jobRouter from "./routes/job.routes.js";
+import admRouter from "./routes/adm.routes.js";
 import { getManualTestCatalog } from "./manual-test/commandCatalog.js";
 
 import { errorHandler, notFoundHandler } from "./middleware/error.middleware.js";
@@ -117,6 +118,7 @@ app.use(API_BASE_PATH, jobRouter);
 
 app.use(API_BASE_PATH, requireApiBearerToken); // Protected routes
 app.use(API_BASE_PATH, serialRouter);
+app.use("/api/adm", requireApiBearerToken, admRouter);
 app.use(API_BASE_PATH, qrNfcRouter);
 app.use(API_BASE_PATH, drugDispenserRouter);
 app.use(API_BASE_PATH, sy600Router);

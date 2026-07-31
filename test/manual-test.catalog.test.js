@@ -8,7 +8,7 @@ test("manual test catalog exposes unique command ids and API paths", () => {
     assert.equal(typeof command.id, "string");
     assert.equal(ids.has(command.id), false, `duplicate command id: ${command.id}`);
     ids.add(command.id);
-    assert.match(command.endpoint, /^\/api\/v1\//);
+    assert.match(command.endpoint, /^\/api\/(v1|adm)\//);
     assert.match(command.method, /^(GET|POST)$/);
     assert.equal(Array.isArray(command.controls), true);
     assert.equal(typeof command.protected, "boolean");

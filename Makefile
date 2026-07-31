@@ -14,7 +14,9 @@ check:
 	node --check src/app.js
 	node --check src/config/env.js
 	node --check src/controllers/serial.controller.js
+	node --check src/controllers/adm.controller.js
 	node --check src/services/serial.service.js
+	node --check src/middleware/validateAdmControl.middleware.js
 
 test:
 	npm test
