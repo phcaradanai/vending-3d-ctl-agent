@@ -27,6 +27,7 @@ const swaggerSpec = {
       "- `POST /serial/vending/write` — hex string → vending port, wait RX.",
       "- `POST /serial/navigation-lights/write` — JSON object → line + newline → nav port, wait RX (retry on timeout).",
       "- `POST /serial/navigation-lights/write-no-wait` — same TX, no RX wait.",
+      "- `POST /api/adm/buzzer` and `POST /api/adm/lock` — ADM controls sent through the same navigation-lights TTY as LED.",
       "",
       "**SY600**",
       "- High-level routes under `/sy600/*` build binary frames, send on vending serial, return decoded fields.",
@@ -37,6 +38,7 @@ const swaggerSpec = {
       "",
       "**Authentication**",
       "- **`API_BEARER_TOKEN`** — when set, protected routes under **`/api/v1/*`** require **`Authorization: Bearer <token>`** (timing-safe compare).",
+      "- ADM control routes under **`/api/adm/*`** use the same Bearer authentication.",
       "- **`GET /health`** is **public** (no Bearer) so load balancers / Docker healthchecks still work.",
       "- **`API_BEARER_REQUIRED=true`** — refuse to start unless **`API_BEARER_TOKEN`** is set (recommended for production).",
       "- Use **Authorize** in Swagger UI (persisted) when a token is configured.",
@@ -447,6 +449,90 @@ const swaggerSpec = {
               },
             },
           },
+        },
+      },
+    },
+    "/buzzer": {
+      servers: [{ url: "/api/adm", description: "ADM control routes" }],
+      post: {
+        tags: ["ADM"],
+        summary: "สั่งเสียง buzzer",
+        description: d(
+          "ส่งคำสั่ง buzzer ผ่าน TTY เดียวกับ LED (`SERIAL_NAVIGATION_LIGHTS`).",
+          "`status`: `0` ปิด, `1` เปิด; `time` คือจำนวนครั้งที่ดัง.",
+          "ใช้ `mode: custom` เพื่อกำหนด `freq`, `timeOn`, `timeOff` เอง."
+        ),
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["control", "cmd"],
+                properties: {
+                  control: { type: "string", enum: ["buzzer"], example: "buzzer" },
+                  cmd: {
+                    type: "object",
+                    required: ["status", "time"],
+                    properties: {
+                      status: { type: "integer", enum: [0, 1], example: 1 },
+                      time: { type: "integer", minimum: 0, example: 1 },
+                      mode: { type: "string", enum: ["standard", "custom"], example: "custom" },
+                      freq: { type: "integer", minimum: 0, example: 1500 },
+                      timeOn: { type: "integer", minimum: 0, example: 80 },
+                      timeOff: { type: "integer", minimum: 0, example: 120 },
+                    },
+                  },
+                },
+                example: { control: "buzzer", cmd: { status: 1, time: 1 } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Buzzer command accepted", content: { "application/json": { schema: { $ref: "#/components/schemas/NavigationLightsWaitResponse" } } } },
+          400: { description: "Invalid ADM command", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial write failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+        },
+      },
+    },
+    "/lock": {
+      servers: [{ url: "/api/adm", description: "ADM control routes" }],
+      post: {
+        tags: ["ADM"],
+        summary: "สั่ง lock ประตูหน้า",
+        description: d(
+          "ส่งคำสั่ง lock ผ่าน TTY เดียวกับ LED (`SERIAL_NAVIGATION_LIGHTS`).",
+          "`status`: `0` ปิด, `1` เปิด; `time` คือระยะเวลาที่เปิดเป็นวินาที.",
+          "เมื่อเปิดเกินเวลาที่กำหนด บอร์ด ADM จะจัดการเสียงเตือนตาม protocol."
+        ),
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["control", "cmd"],
+                properties: {
+                  control: { type: "string", enum: ["lock"], example: "lock" },
+                  cmd: {
+                    type: "object",
+                    required: ["status", "time"],
+                    properties: {
+                      status: { type: "integer", enum: [0, 1], example: 1 },
+                      time: { type: "integer", minimum: 0, example: 15 },
+                    },
+                  },
+                },
+                example: { control: "lock", cmd: { status: 1, time: 15 } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Lock command accepted", content: { "application/json": { schema: { $ref: "#/components/schemas/NavigationLightsWaitResponse" } } } },
+          400: { description: "Invalid ADM command", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
+          500: { description: "Serial write failure", content: { "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } } } },
         },
       },
     },
