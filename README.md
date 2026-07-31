@@ -198,6 +198,18 @@ Both compose files:
 
   Same `cmd` meaning as the write endpoint above.
 
+- **`POST /api/adm/buzzer`** and **`POST /api/adm/lock`** — ADM JSON commands sent
+  through the same `SERIAL_NAVIGATION_LIGHTS` TTY and write queue as LED.
+
+  ```json
+  { "control": "buzzer", "cmd": { "status": 1, "time": 1 } }
+  { "control": "buzzer", "cmd": { "status": 1, "mode": "custom", "freq": 1500, "timeOn": 80, "timeOff": 120, "time": 5 } }
+  { "control": "lock", "cmd": { "status": 1, "time": 15 } }
+  ```
+
+  `status` is `0` (off/close) or `1` (on/open). `time` is a non-negative
+  integer; the ADM board handles the lock timeout warning buzzer.
+
 - **`POST /api/v1/vending/drugDispenser`** — One Sticker/prescription per physical
   dispense. Items are picked from the highest layer down, delivered once, and
   the request remains open until sensor `0x35` (type `0`, drop/pickup IR)
